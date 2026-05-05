@@ -80,13 +80,5 @@ Die begleitende Projektdokumentation (PDF/Notebook) ist wie folgt gegliedert:
 
 ## 🛠 Technologien & Installation
 
-- **Sprache:** Python 3.x
-- **Optimierung:** [Gurobi / CPLEX / OR-Tools]
 - **Bibliotheken:** `pandas`, `numpy`, `matplotlib`, `scipy`
 
-```bash
-# Repository klonen
-git clone [https://github.com/nutzername/green-vrp-optimization.git](https://github.com/nutzername/green-vrp-optimization.git)
-
-# Abhängigkeiten installieren
-pip install -r requirements.txt
