@@ -144,4 +144,4 @@ The literature leaves several choices open. These should be decided together wit
 - Is risk fixed per road segment, or does it increase with load and vehicle type?
 - Do we use one weighted objective, or do we generate several trade-off solutions with different risk-cost weights?
 
-At this stage, this summary should be understood as a literature-based foundation for discussion, not as the final project specification.
+These points can help the team decide together which modeling choices are realistic for the next project steps.
