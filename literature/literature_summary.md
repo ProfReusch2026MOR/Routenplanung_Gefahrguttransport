@@ -42,7 +42,7 @@ This classification is important because the project is not only about finding s
 
 This paper is useful because it explains why risk modeling is a central issue in hazardous-material transport. The authors show that different definitions of transport risk can lead to different "best" routes. This is directly relevant for our project: we cannot simply say that the safest route is the shortest route.
 
-For our model, this paper supports the idea that risk should be explicitly calculated for each road segment. A practical project-level risk value can be based on accident probability, population exposure, and route hazard factors. The paper also reminds us to describe our risk function clearly, because it is a modeling assumption, not a universal truth.
+For our project, this paper supports the idea that risk should be discussed explicitly instead of being hidden behind distance or travel time. It also reminds us that the final risk function is a modeling choice that the team should justify clearly.
 
 ### Holeczek (2019)
 
@@ -50,7 +50,7 @@ For our model, this paper supports the idea that risk should be explicitly calcu
 
 This review gives the broader academic context for hazardous-material truck routing. It shows that hazmat routing is treated separately from standard transport planning because safety, regulation, population exposure, and environmental consequences matter.
 
-For our project, this source helps us explain the problem class. It supports calling our topic HMVRP and helps justify why our constraints include road restrictions, prohibited areas, and hazardous-material-specific permissions. It is also useful for discussing limitations, especially if we use generated data instead of complete real-world accident and population datasets.
+For our project, this source helps us explain the problem class. It supports calling our topic HMVRP and helps justify why road restrictions, prohibited areas, and hazardous-material-specific permissions are relevant. It is also useful for discussing limitations, especially if complete real-world accident and population data are not available.
 
 ### Zografos and Androutsopoulos (2004)
 
@@ -58,7 +58,7 @@ For our project, this source helps us explain the problem class. It supports cal
 
 This paper is closely connected to our planned heuristic part. It describes hazardous-material distribution as a bi-objective routing problem where risk and cost both matter. The paper also proposes a heuristic approach for solving hazardous-material distribution problems.
 
-For our project, this supports a simple and explainable heuristic design: build feasible routes step by step, insert deliveries where they create the smallest weighted increase in risk and cost, and then improve the result with local search. This fits our coursework setting because the method is understandable, implementable, and still clearly connected to the literature.
+For our project, this paper is useful when discussing a possible heuristic direction. It suggests that a constructive route-building method can be a reasonable starting point, especially when risk and cost must both be considered.
 
 ### Androutsopoulos and Zografos (2012)
 
@@ -66,7 +66,7 @@ For our project, this supports a simple and explainable heuristic design: build 
 
 This paper extends the hazmat routing idea by considering time-dependent travel conditions and delivery scheduling. It formulates the problem as a bi-objective vehicle routing and scheduling problem with time windows.
 
-For our project, the most important insight is that hazardous-material routing can involve two connected decisions: the order of deliveries and the actual path between them. In a simplified model, we can precompute risk and cost between relevant nodes and then solve the vehicle routing problem on this reduced network. If we later include time windows or route duration limits, this paper gives a strong reference.
+For our project, the most important insight is that hazardous-material routing can involve two connected decisions: the order of deliveries and the actual path between them. If the team later includes time windows, travel-time effects, or route duration limits, this paper can provide a useful reference.
 
 ### Bula et al. (2016)
 
@@ -74,7 +74,7 @@ For our project, the most important insight is that hazardous-material routing c
 
 This paper is useful for the solver-based side of the project. It presents a mixed-integer linear programming model for hazardous-material vehicle routing and discusses risk minimization in a heterogeneous vehicle setting.
 
-For our project, it supports using a MILP-style model with binary route decisions, vehicle capacity constraints, and a risk-based objective. The paper also discusses load-dependent risk. We can start with a simpler fixed arc-risk model and mention load-dependent risk as a possible extension if the basic model is already working.
+For our project, it supports the idea that a solver-based HMVRP model can be formulated with binary routing decisions, vehicle capacity constraints, and a risk-related objective. The paper also discusses load-dependent risk, which could be considered later if the team decides that this level of detail fits the project scope.
 
 ### Bula et al. (2017)
 
@@ -82,7 +82,7 @@ For our project, it supports using a MILP-style model with binary route decision
 
 This paper is especially relevant for the heuristic part. It applies Variable Neighborhood Search (VNS) to a hazardous-material vehicle routing problem. The risk depends on vehicle load, vehicle type, and exposed population.
 
-For our project, a full VNS may be more complex than necessary, but the idea of improving an initial solution through neighborhoods is very useful. We can implement a smaller version with common local search moves such as 2-opt, relocate, and swap. This gives us a meaningful heuristic without making the project too hard to explain.
+For our project, a full VNS may be more complex than necessary for the first milestone. However, the general idea of improving an initial route plan through neighborhood moves is relevant for discussing heuristic options.
 
 ### Cuneo et al. (2018)
 
@@ -90,109 +90,53 @@ For our project, a full VNS may be more complex than necessary, but the idea of 
 
 This paper is valuable because it is close to a practical logistics setting. It studies fuel distribution and uses a risk index based on population density and accident estimates. This matches our project idea very well because our risk components also include population density and accident probability.
 
-For our project, this paper can guide the data model. Even if we generate artificial data, the generated risk values should have a realistic interpretation: road segments near dense population or risky infrastructure should receive higher risk values than remote or safer roads.
+For our project, this paper can guide the discussion of data assumptions. It shows how a practical risk index can connect accident estimates and population exposure, which fits our current understanding of route-based risk.
 
-## How the Literature Shapes Our Model
+## Project Implications from the Literature
 
-### Decision variables
+The literature does not decide the final model for us, but it gives useful guidance for the team discussion.
 
-The literature supports decision variables that describe:
+### Modeling direction
 
-- whether vehicle `k` travels from node `i` to node `j`;
-- whether customer or delivery `d` is served by vehicle `k`;
-- possibly the load carried after visiting a node;
-- possibly the arrival time at a customer, if time windows are included.
+The reviewed papers support describing the problem as a risk-based HMVRP. The model should probably distinguish between risk and cost instead of using distance as the only objective. A simple risk idea that appears repeatedly in the literature is that road segments become more critical when accident probability and exposed population are high.
 
-For a first implementation, binary arc variables and load variables are enough.
+Possible modeling elements to discuss with the team:
 
-### Objective
+- vehicle-route decisions on a network;
+- delivery assignment and service constraints;
+- vehicle capacity and limited fleet size;
+- road permissions or prohibited arcs;
+- a risk measure based on accident probability, population exposure, and route-specific hazard factors;
+- a cost measure based on distance, travel time, energy use, tolls, or a combination of these.
 
-The project should keep risk as the primary objective and cost as the secondary objective. A practical formulation is a weighted objective:
+### Heuristic direction
 
-`minimize alpha * total_risk + beta * total_cost`
+The heuristic literature suggests that a constructive route-building method combined with local improvement could be a realistic option for the project. This is not a final algorithm decision yet, but the following ideas appear suitable for further team discussion:
 
-where:
+- build feasible routes step by step;
+- evaluate candidate route changes with both risk and cost in mind;
+- respect capacity and road-permission constraints during route construction;
+- improve a first solution with local search or neighborhood moves.
 
-- `total_risk` is the sum of risk values on used arcs;
-- `total_cost` is based on distance, travel time, energy use, or tolls;
-- `alpha` and `beta` control how strongly the model prefers safety over cost.
+This direction is stronger than a pure nearest-neighbor rule, but still easier to explain than a full metaheuristic such as VNS or ALNS.
 
-For experiments, we can test different weights to show how the selected routes change when the planner cares more about safety or more about cost.
+### Data and experiment direction
 
-### Risk calculation
+The literature also shows that the data should be meaningful from a transport-risk perspective. Accident data, population exposure, road restrictions, infrastructure sensitivity, vehicle data, and cost data can all influence the final routing decision.
 
-A simple and explainable arc risk formula is:
+For experiments, the team should later decide which instance sizes and metrics fit the solver and heuristic implementation. The literature suggests that useful comparison metrics may include:
 
-`risk_ij = accident_probability_ij * population_exposure_ij * hazard_factor_ij`
-
-The `hazard_factor_ij` can represent critical infrastructure, tunnel usage, dense residential areas, or other dangerous route properties.
-
-Later extensions could include:
-
-- vehicle type;
-- remaining load;
-- hazardous-material class;
-- time-dependent traffic risk;
-- route-specific legal restrictions.
-
-### Constraints
-
-The literature and project scope suggest the following core constraints:
-
-- every delivery must be transported exactly once;
-- vehicle capacity must not be exceeded;
-- the number of available vehicles is limited;
-- vehicles must move along valid network paths;
-- prohibited road segments, tunnels, city centers, or residential areas must be excluded or penalized;
-- roads may allow only specific hazardous-material classes;
-- each route must start and end at the depot, unless the final model defines a different operational rule.
-
-These constraints are what make the problem a real OR model instead of a normal shortest-path problem.
-
-## Heuristic Direction
-
-The planned heuristic should be simple enough to implement but still meaningful for HMVRP.
-
-A suitable first version is a risk-aware insertion heuristic:
-
-1. Start with empty routes for the available vehicles.
-2. Sort deliveries by a priority score, for example high demand, high direct risk, or distance from the depot.
-3. Insert each delivery into the feasible route position with the smallest increase in weighted risk and cost.
-4. Respect capacity and road-permission constraints during insertion.
-5. Improve the solution with local search:
-   - 2-opt inside a route;
-   - relocate one delivery to another route;
-   - swap two deliveries between routes.
-
-This heuristic is easy to explain in the review meeting: it imitates how a logistics planner might build routes, but it evaluates every insertion with a risk-cost score instead of distance only.
-
-## Experiment Ideas
-
-The experiments should show that the solver and the heuristic behave differently as the instance grows.
-
-Suggested instance levels:
-
-| Instance | Possible structure | Purpose |
-|---|---:|---|
-| Small | about 8-12 deliveries, 2 vehicles | Check whether the MILP model works and can prove optimality |
-| Medium | about 25-40 deliveries, 4-6 vehicles | Compare solver quality and heuristic runtime |
-| Large | about 70-100 deliveries, 8-12 vehicles | Show scalability limits of the solver and usefulness of the heuristic |
-
-Important metrics:
-
-- total risk;
-- total cost;
-- weighted objective value;
 - runtime;
 - solver status;
-- MIP gap or best bound, if available;
-- number of vehicles used;
+- objective value;
+- total risk and total cost shown separately;
 - feasibility of all routes;
-- heuristic gap compared with the solver solution or bound.
+- solver gap or best bound, if available;
+- heuristic quality compared with the solver solution or bound.
 
 ## Open Modeling Choices
 
-Some decisions should be made consistently before implementation:
+The literature leaves several choices open. These should be decided together with the team members responsible for data, model, solver, and experiments:
 
 - Do we model cost as distance, travel time, energy use, tolls, or a weighted combination?
 - Are forbidden roads completely removed, or are risky roads allowed with high penalties?
@@ -200,19 +144,4 @@ Some decisions should be made consistently before implementation:
 - Is risk fixed per road segment, or does it increase with load and vehicle type?
 - Do we use one weighted objective, or do we generate several trade-off solutions with different risk-cost weights?
 
-For the current project scope, the most practical first version is:
-
-- fixed arc risk;
-- cost based mainly on distance or travel time;
-- vehicle capacity and limited fleet;
-- hard exclusion of forbidden road segments;
-- weighted objective with different risk-cost settings for experiments.
-
-## Short Review Meeting Explanation
-
-Our literature review confirms that our topic belongs to the Hazardous Materials Vehicle Routing Problem. The decision maker is a logistics planner who must assign vehicles, select routes, and plan deliveries. The main objective is to reduce total transport risk, especially risk caused by population exposure, accident probability, critical infrastructure, and dangerous road segments. Transport cost is still important, but it is secondary to safety.
-
-The literature also shows that hazardous-material routing is different from standard VRP because the shortest or cheapest route may be unacceptable for safety or legal reasons. Therefore, our model should use explicit risk values on road segments and include constraints for vehicle capacity, mandatory delivery service, limited fleet size, valid network paths, and hazardous-material road restrictions.
-
-For the solver part, we plan a MILP-style capacitated HMVRP model. For the heuristic part, we plan a risk-aware insertion heuristic with local search. The experiments will compare both approaches on small, medium, and large instances using risk, cost, runtime, feasibility, and solver gap.
-
+At this stage, this summary should be understood as a literature-based foundation for discussion, not as the final project specification.
