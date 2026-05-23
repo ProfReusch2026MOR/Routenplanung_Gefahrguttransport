@@ -1,0 +1,5 @@
+scenario,price_eur_per_kwh
+depot,0.35
+urban_ac,0.55
+urban_dc,0.6
+highway_hpc,0.75
