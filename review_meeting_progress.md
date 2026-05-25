@@ -75,7 +75,13 @@ Welche Fahrzeuge bedienen welche Gefahrgutlieferungen auf welchen zulässigen Ro
 
 ## 7) Aktuelle Literatur
 
-*   *Source 1:* tbd
+*   Erkut & Verter (1998): Risk modeling for hazardous-material transport
+*   Holeczek (2019): Classification and literature review of hazardous-material truck transportation
+*   Zografos & Androutsopoulos (2004): Heuristic algorithm for hazardous-material distribution problems
+*   Androutsopoulos & Zografos (2012): Bi-objective time-dependent routing and scheduling for hazardous-material distribution
+*   Bula et al. (2016): MILP model for hazardous-material vehicle routing
+*   Bula et al. (2017): Variable Neighborhood Search for hazardous-material vehicle routing
+*   Cuneo et al. (2018): Risk-based multi-objective vehicle routing in fuel logistics
 
 ## 8) Bekannte Probleme, Risiken & Fragen für Feedback
 *   **Bekannte Probleme/Risiken:** Daten runterladen dauert zu lange und bricht ab durch zu wenig Speicher
