@@ -2,22 +2,9 @@
 
 ## 1. Scope
 
-This document describes the planned heuristic for the HMVRP part of the project. It focuses only on the heuristic idea: what the method receives as input, how it builds feasible solutions, how it improves them, and how its result can be compared with the solver.
+This document defines the heuristic for the routing-and-assignment part of the project.
 
-The decision maker is a transport company or logistics planner. The main decisions are:
-
-- assign each hazardous-material delivery to one electric truck;
-- choose a permitted path through the road network for each delivery;
-- balance transport risk and transport cost.
-
-Each delivery `l` is treated as an origin-destination transport task:
-
-- origin node `O_l`;
-- destination node `D_l`;
-- demand `Dem_l`;
-- hazardous-material class `Class_l`.
-
-The heuristic should therefore not build a classic depot-customer-depot tour. Instead, it should choose one feasible network path for each delivery and assign that delivery to a suitable electric truck.
+Each delivery `l` is treated as an origin-destination task with `O_l`, `D_l`, `Dem_l`, and `Class_l`. The heuristic therefore chooses one feasible network path for each delivery and assigns that delivery to a suitable electric truck. It does not build a classic depot-customer-depot tour.
 
 ## 2. Selected Method
 
@@ -35,11 +22,14 @@ This method fits the project because the routing decision and the vehicle decisi
 
 ## 3. Why This Heuristic Fits
 
-Hazardous-material routing is different from normal shortest-path routing. A short road segment can be unattractive if it passes through a dense area, has high accident exposure, is close to sensitive areas, or is legally restricted for a specific hazardous-material class.
+The method matches the current data and model structure:
 
-The heuristic therefore uses risk directly instead of treating distance as the only criterion. It also keeps the electric-truck setting visible through payload capacity, energy-related cost, and battery range.
+- deliveries already have origin and destination nodes;
+- edges carry distance, risk, cost, and permission information;
+- vehicles have capacity, fixed cost, variable cost, and battery range;
+- a feasible solution can be represented by selected path edges, vehicle assignments, and active vehicles.
 
-The method is also practical for implementation. It is stronger than a pure greedy shortest-path rule, but still much easier to explain and verify than a full ALNS or VNS.
+This makes the heuristic easy to compare with the solver while still keeping the implementation manageable.
 
 ## 4. Input Data
 
