@@ -65,7 +65,7 @@ For each vehicle `v`:
 
 For each directed edge `e` and hazardous-material class `k`:
 
-- `Dist_e`: distance;
+- `Len_e`: edge length;
 - `Risk_{e,k}`: risk score;
 - `Allow_{e,k}`: 1 if edge `e` is allowed for class `k`, otherwise 0.
 
@@ -91,8 +91,8 @@ The variable vehicle cost on an edge can be scored as:
 
 ```text
 VC_{v,e} =
-    Dist_e * km_cost_v
-    + Dist_e * energy_kwh_per_km_v * energy_price_e
+    Len_e * km_cost_v
+    + Len_e * energy_kwh_per_km_v * energy_price_e
 ```
 
 For one delivery `l`, vehicle `v`, and candidate path `p`, the heuristic score is:
@@ -109,7 +109,7 @@ with:
 ```text
 path_risk(l, p) = sum Risk_{e, Class_l} for all e in p
 path_cost(v, p) = sum VC_{v,e} for all e in p
-path_distance(p) = sum Dist_e for all e in p
+path_length(p) = sum Len_e for all e in p
 ```
 
 The activation penalty is used only when a previously unused vehicle becomes active. This keeps fixed vehicle cost from being counted multiple times.
@@ -150,7 +150,7 @@ Deliveries should be processed in a priority order so that difficult cases are h
 ```text
 priority_l =
     normalized_demand_l
-    + normalized_min_path_distance_l
+    + normalized_min_path_length_l
     + normalized_min_path_risk_l
     + penalty_if_few_feasible_vehicles
 ```
@@ -160,8 +160,8 @@ For each delivery in this order:
 1. test all candidate paths;
 2. test all vehicles;
 3. keep only combinations where:
-   - `Dem_l` fits into the remaining capacity of vehicle `v`;
-   - `path_distance(p) <= Range_v`;
+   - `Dem_l <= Cap_v`;
+   - `path_length(p) <= Range_v`;
    - all path edges are allowed for `Class_l`;
 4. choose the feasible path-vehicle combination with the lowest incremental score.
 
@@ -170,6 +170,8 @@ If no feasible combination exists, the heuristic returns infeasible for the curr
 ## 8. Phase 3: Local Search Improvement
 
 The initial solution is feasible, but not necessarily good. Local search tries small changes and accepts them only if they improve the score and keep all constraints feasible.
+
+These moves are chosen because they directly match the two decisions of the heuristic: path selection and vehicle assignment.
 
 ### Alternative Path Switch
 
@@ -181,7 +183,7 @@ This can reduce risk or cost without changing the assigned vehicle.
 
 Move one delivery from its current vehicle to another vehicle.
 
-This can reduce cost, improve capacity usage, or avoid using an additional vehicle. The move is accepted only if the target vehicle has enough remaining capacity and range.
+This can reduce cost or avoid using an additional vehicle. The move is accepted only if the target vehicle can carry the delivery and cover the selected path length.
 
 ### Assignment Swap
 
@@ -205,22 +207,24 @@ Checks:
 - every delivery is assigned to exactly one vehicle;
 - every selected path connects `O_l` to `D_l`;
 - no selected edge violates `Allow_{e, Class_l}`;
-- vehicle capacity is respected:
+- vehicle capacity is respected for each assigned delivery:
 
 ```text
-sum Dem_l for deliveries assigned to v <= Cap_v
+Dem_l <= Cap_v
 ```
+
+In the first heuristic version, each delivery is checked against the vehicle capacity individually. The heuristic does not yet schedule the chronological order of several deliveries assigned to the same vehicle. Therefore, cumulative vehicle load is only used if the planning scenario assumes that these deliveries are carried together in the same batch.
 
 - battery range is respected:
 
 ```text
-path_distance_l <= Range_v
+path_length_l <= Range_v
 ```
 
 - fixed cost is counted only for active vehicles;
 - total risk and total cost are recomputed from the selected paths.
 
-Charging stops are not part of the first heuristic version. The first version only checks whether a selected path fits the assigned vehicle range. Charging infrastructure can be added later as an extension.
+Charging stops are not included in the first heuristic version. A path is feasible only if its total length fits within the assigned vehicle range. This keeps the first implementation focused on path selection and vehicle assignment, while leaving charging decisions as a later extension.
 
 ## 10. Output
 
@@ -229,8 +233,7 @@ The heuristic should return:
 - selected path for each delivery;
 - assigned vehicle for each delivery;
 - active vehicles;
-- total assigned demand per vehicle;
-- remaining capacity per vehicle;
+- capacity feasibility per assigned delivery;
 - distance per delivery;
 - risk per delivery;
 - variable cost per delivery;
@@ -260,7 +263,7 @@ Useful metrics:
 - fixed cost and variable cost separately;
 - runtime;
 - active vehicles;
-- capacity usage;
+- capacity feasibility;
 - solver status;
 - solver bound or gap, if available;
 - heuristic gap compared with the solver objective or bound.
@@ -283,7 +286,7 @@ Input:
     vehicles V, deliveries L, nodes N, edges E,
     demand Dem_l, class Class_l, origins O_l, destinations D_l,
     risk Risk_{e,k}, permission Allow_{e,k},
-    distance Dist_e, range Range_v, capacity Cap_v,
+    edge length Len_e, range Range_v, capacity Cap_v,
     fixed cost FC_v, variable cost VC_{v,e},
     weights w1 and w2
 
@@ -303,7 +306,7 @@ Construct initial solution:
         keep combinations satisfying capacity, range, and permission checks
         choose the lowest incremental score
         assign delivery to path and vehicle
-        update vehicle capacity and activation
+        update vehicle activation
 
 Improve solution:
     repeat:
