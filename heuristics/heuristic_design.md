@@ -1,130 +1,51 @@
 # Heuristic Design for Hazardous Materials Vehicle Routing
 
-## 1. Purpose and Project Context
+## 1. Scope
 
-This document describes the planned heuristic method for our project **Hazardous Materials Vehicle Routing Optimization (HMVRP)**.
+This document describes the planned heuristic for the HMVRP part of the project. It focuses only on the heuristic idea: what the method receives as input, how it builds feasible solutions, how it improves them, and how its result can be compared with the solver.
 
-The decision maker is a **transport company or logistics planner** (`Transportunternehmen bzw. Logistikplaner`). The planner has to decide:
+The decision maker is a transport company or logistics planner. The main decisions are:
 
-- which electric truck is assigned to which hazardous-material delivery;
-- which permitted path through the road network is used for each delivery;
-- how risk and transport cost are balanced in the final plan.
+- assign each hazardous-material delivery to one electric truck;
+- choose a permitted path through the road network for each delivery;
+- balance transport risk and transport cost.
 
-The current MILP notebook in `dist/Model_MILP_Gefahrgut_DE.ipynb` gives an important direction for the heuristic. The model is not a classic depot-customer-depot CVRP tour model. Instead, each delivery `l` has:
+Each delivery `l` is treated as an origin-destination transport task:
 
-- an origin node `O_l`;
-- a destination node `D_l`;
-- a demand `Dem_l`;
-- a hazardous-material class `Class_l`.
+- origin node `O_l`;
+- destination node `D_l`;
+- demand `Dem_l`;
+- hazardous-material class `Class_l`.
 
-The route decision is therefore a **network path decision for each delivery**, combined with a **vehicle assignment decision**. To stay consistent with the solver, the heuristic should follow the same structure.
+The heuristic should therefore not build a classic depot-customer-depot tour. Instead, it should choose one feasible network path for each delivery and assign that delivery to a suitable electric truck.
 
-In short:
+## 2. Selected Method
 
-> For every hazardous-material delivery, find a legally allowed low-risk path from origin to destination and assign the delivery to a suitable electric truck, while respecting vehicle capacity, battery range, ADR restrictions, and transport cost.
+The selected method is a:
 
-## 2. Problem Class and Routing Difficulty
+> **Risk-cost candidate path heuristic with vehicle-assignment local search.**
 
-The main OR problem class is still the **Vehicle Routing Problem (VRP)** family, because vehicles have to be assigned to transport tasks under capacity and routing constraints.
+The idea is simple:
 
-More precisely, our project is a **Hazardous Materials Vehicle Routing Problem (HMVRP)** with a strong **multi-commodity network flow** character:
+1. For every delivery, generate a small set of feasible candidate paths from `O_l` to `D_l`.
+2. Assign each delivery-path combination to an electric truck while checking capacity and range.
+3. Improve the first solution by switching paths or changing vehicle assignments.
 
-- each delivery behaves like one commodity moving from `O_l` to `D_l`;
-- every selected edge contributes risk and cost;
-- edges may be forbidden for specific hazardous-material classes;
-- each delivery must be assigned to exactly one vehicle;
-- each vehicle has payload capacity and battery range.
+This method fits the project because the routing decision and the vehicle decision are connected but can still be handled in understandable steps.
 
-The problem is difficult because the safest path is not always the cheapest path, and the cheapest vehicle assignment is not always feasible. For example, an electric truck may be cheap but have insufficient range for a long path, or a short road segment may be forbidden for a specific ADR class.
+## 3. Why This Heuristic Fits
 
-Important constraints are:
+Hazardous-material routing is different from normal shortest-path routing. A short road segment can be unattractive if it passes through a dense area, has high accident exposure, is close to sensitive areas, or is legally restricted for a specific hazardous-material class.
 
-- **Transportpflicht:** every delivery must be transported exactly once;
-- **Fahrzeugkapazitaet:** total assigned delivery weight must not exceed vehicle payload;
-- **ADR / Gefahrgut restrictions:** edges are allowed only for compatible hazardous-material classes;
-- **Road-network logic:** routes must be connected paths from origin to destination;
-- **Battery range:** route distance must fit the assigned electric truck range;
-- **Limited fleet:** only available vehicles can be used.
+The heuristic therefore uses risk directly instead of treating distance as the only criterion. It also keeps the electric-truck setting visible through payload capacity, energy-related cost, and battery range.
 
-## 3. Literature-Based Motivation
+The method is also practical for implementation. It is stronger than a pure greedy shortest-path rule, but still much easier to explain and verify than a full ALNS or VNS.
 
-The literature summary gives the logic behind the heuristic. The main lesson is that hazardous-material routing should not be reduced to distance minimization. Risk must be visible in the data, the objective, and the final comparison.
+## 4. Input Data
 
-### Erkut and Verter (1998): Risk Must Be Explicit
+The heuristic uses the same conceptual data as the mathematical model.
 
-Erkut and Verter show that the definition of risk can strongly influence the selected route. For our project, this means that risk cannot be hidden inside a generic travel cost.
-
-How this shapes our heuristic:
-
-- each edge should have an explicit risk score;
-- path selection should use risk directly;
-- the output should report risk and cost separately.
-
-### Holeczek (2019): HMVRP Is Different From Standard VRP
-
-Holeczek helps place the project in the hazmat routing literature. Hazardous-material truck routing is different from normal delivery routing because legal restrictions, accident consequences, population exposure, and environmental effects matter.
-
-How this shapes our heuristic:
-
-- prohibited edges are infeasible, not just expensive;
-- ADR class compatibility must be checked during path generation;
-- the heuristic should be described as HMVRP-specific.
-
-### Zografos and Androutsopoulos (2004): Risk and Cost Together
-
-Zografos and Androutsopoulos treat hazardous-material distribution as a problem with both risk and cost. This matches our project because the planner wants safe routes but cannot ignore operating cost.
-
-How this shapes our heuristic:
-
-- use a weighted risk-cost score for path selection;
-- keep risk and cost as separate reporting metrics;
-- use weight changes later for sensitivity analysis.
-
-### Androutsopoulos and Zografos (2012): Path Choice Matters
-
-This work is useful because it separates the idea of delivery planning from the actual path through the network. In our project, this is very relevant: each delivery has an origin and destination, and the heuristic must choose the path between them.
-
-How this shapes our heuristic:
-
-- generate candidate paths for each delivery;
-- evaluate these paths using edge risk, cost, permission, and distance;
-- then combine path choice with vehicle assignment.
-
-### Bula et al. (2016): Solver Structure and Vehicle Assignment
-
-Bula et al. support the MILP-style view with routing variables and vehicle assignment variables. Our group member's notebook follows a similar idea: routing is represented by delivery-edge flow variables, and assignment is represented by delivery-vehicle variables.
-
-How this shapes our heuristic:
-
-- keep path selection and vehicle assignment connected but modular;
-- include capacity and activation logic for vehicles;
-- compare heuristic output with the same quantities as the solver.
-
-### Bula et al. (2017): Improvement Through Neighborhoods
-
-Bula et al. use neighborhood search for HMVRP. We do not need a full VNS as a first step, but the idea of improving a feasible solution by local changes is useful.
-
-How this shapes our heuristic:
-
-- start with a feasible path-and-assignment solution;
-- improve it by changing one delivery path, moving a delivery to another vehicle, or swapping vehicle assignments;
-- accept only changes that keep all constraints feasible.
-
-### Cuneo et al. (2018): Practical Risk Index
-
-Cuneo et al. use a practical risk index for hazardous-material logistics. This fits our project because the MILP notebook defines edge risk from population density, accident rate, and nature reserve proximity.
-
-How this shapes our heuristic:
-
-- use the same edge risk logic as the MILP;
-- avoid artificial route choices that ignore the meaning of the risk score;
-- make the safety-cost trade-off visible in experiments.
-
-## 4. Consistency With the Current MILP Model
-
-The heuristic should be aligned with the current MILP structure.
-
-### MILP Sets
+### Sets
 
 - `V`: available electric trucks;
 - `L`: hazardous-material deliveries;
@@ -132,37 +53,35 @@ The heuristic should be aligned with the current MILP structure.
 - `E`: directed road edges;
 - `K`: hazardous-material classes.
 
-### MILP Parameters Relevant for the Heuristic
+### Delivery Data
 
-- `Cap_v`: payload capacity of vehicle `v`;
-- `FC_v`: fixed cost of using vehicle `v`;
-- `VC_{v,e}`: variable cost of vehicle `v` on edge `e`;
-- `Dem_l`: weight of delivery `l`;
-- `Class_l`: hazardous-material class of delivery `l`;
-- `O_l`, `D_l`: origin and destination of delivery `l`;
-- `Risk_{e,k}`: risk score of edge `e` for hazardous-material class `k`;
-- `Allow_{e,k}`: permission flag for edge `e` and class `k`;
-- `Dist_e`: edge distance;
-- `Range_v`: battery range of vehicle `v`.
+For each delivery `l`:
 
-### MILP Decisions to Mirror
+- `O_l`: origin node;
+- `D_l`: destination node;
+- `Dem_l`: delivery weight;
+- `Class_l`: hazardous-material class.
 
-The solver uses:
+### Vehicle Data
 
-- `f_{l,e}`: whether delivery `l` uses edge `e`;
-- `y_{l,v}`: whether delivery `l` is assigned to vehicle `v`;
-- `z_v`: whether vehicle `v` is active.
+For each vehicle `v`:
 
-The heuristic should return the same type of information:
+- `Cap_v`: payload capacity;
+- `Range_v`: battery range;
+- `FC_v`: fixed cost if the vehicle is used;
+- `VC_{v,e}`: variable cost on edge `e`, based on distance and energy cost.
 
-- selected path edges for each delivery;
-- assigned vehicle for each delivery;
-- active vehicles;
-- risk, cost, distance, and feasibility status.
+### Edge Data
 
-## 5. Risk and Cost Definition
+For each directed edge `e` and hazardous-material class `k`:
 
-The MILP notebook defines the edge risk score as a weighted sum:
+- `Dist_e`: distance;
+- `Risk_{e,k}`: risk score;
+- `Allow_{e,k}`: 1 if edge `e` is allowed for class `k`, otherwise 0.
+
+## 5. Risk and Cost Scoring
+
+The heuristic should use the same risk idea as the model. A practical edge risk score is:
 
 ```text
 Risk_{e,k} =
@@ -171,15 +90,14 @@ Risk_{e,k} =
     + gamma * NatRes_e
 ```
 
-with:
+where:
 
-```text
-alpha + beta + gamma = 1
-```
+- `PopDens_e` represents population exposure;
+- `AccRate_e` represents accident exposure;
+- `NatRes_e` represents proximity to sensitive natural areas;
+- `alpha + beta + gamma = 1`.
 
-This is more consistent with the current project than the earlier multiplicative risk formula. Therefore, the heuristic should use the same risk score.
-
-The variable cost for vehicle `v` on edge `e` is:
+The variable vehicle cost on an edge can be scored as:
 
 ```text
 VC_{v,e} =
@@ -187,84 +105,57 @@ VC_{v,e} =
     + Dist_e * energy_kwh_per_km_v * energy_price_e
 ```
 
-The objective should follow the same idea as the solver: a normalized weighted sum of risk and cost.
-
-For heuristic scoring, a practical path score for delivery `l` and vehicle `v` is:
+For one delivery `l`, vehicle `v`, and candidate path `p`, the heuristic score is:
 
 ```text
-score(l, v, path) =
-    w1 * normalized_path_risk(l, path)
-    + w2 * normalized_vehicle_cost(v, path)
+score(l, v, p) =
+    w1 * normalized_path_risk(l, p)
+    + w2 * normalized_path_cost(v, p)
+    + activation_penalty(v)
 ```
 
-where:
+with:
 
 ```text
-path_risk(l, path) = sum Risk_{e, Class_l} over all edges e in path
-path_cost(v, path) = fixed_cost_share_v + sum VC_{v,e} over all edges e in path
-path_distance(path) = sum Dist_e over all edges e in path
+path_risk(l, p) = sum Risk_{e, Class_l} for all e in p
+path_cost(v, p) = sum VC_{v,e} for all e in p
+path_distance(p) = sum Dist_e for all e in p
 ```
 
-The fixed vehicle cost `FC_v` should be counted once if a vehicle is used, not once per delivery. During construction, we can approximate it with an activation penalty when opening a new vehicle.
+The activation penalty is used only when a previously unused vehicle becomes active. This keeps fixed vehicle cost from being counted multiple times.
 
-## 6. Selected Heuristic Method
+## 6. Phase 1: Candidate Path Generation
 
-The recommended heuristic is:
+For each delivery `l`, generate candidate paths from `O_l` to `D_l`.
 
-> **Risk-cost candidate path heuristic with vehicle-assignment local search.**
-
-This better matches the current MILP than a classic customer-insertion route heuristic.
-
-The method has three phases:
-
-1. Generate feasible candidate paths for each delivery.
-2. Construct an initial vehicle assignment using the best feasible path-vehicle combinations.
-3. Improve the solution by changing paths or reassigning deliveries between vehicles.
-
-## 7. Phase 1: Candidate Path Generation
-
-For each delivery `l`, the heuristic generates several candidate paths from `O_l` to `D_l`.
-
-Before path search, remove all edges that are forbidden for the delivery class:
+Before searching for paths, remove all edges that are not allowed for the delivery class:
 
 ```text
-Allow_{e, Class_l} = 0  =>  edge e cannot be used for delivery l
+Allow_{e, Class_l} = 0  =>  edge e is not available
 ```
 
-For the remaining edges, define a delivery-specific edge score:
+Then generate a small path set, for example:
 
-```text
-edge_score_{l,e} =
-    w1 * Risk_{e, Class_l}
-    + w2 * average_cost_e
-```
-
-`average_cost_e` can be the average variable cost across vehicles or a normalized distance-based cost. This keeps path generation independent from the later vehicle assignment.
-
-Then generate candidate paths such as:
-
-- lowest-risk path;
-- lowest-cost or shortest path;
-- lowest weighted risk-cost path;
-- a few alternative paths from k-shortest path logic.
+- one lowest-risk path;
+- one lowest-cost or shortest path;
+- one weighted risk-cost path;
+- a few alternatives from k-shortest path logic, if available.
 
 Each candidate path stores:
 
-- list of edges;
+- edge sequence;
 - total distance;
-- total risk for the delivery class;
-- whether it is legally permitted;
-- possible vehicles that can cover its distance.
+- total risk;
+- total variable cost per vehicle;
+- feasible vehicles based on range.
 
-If no permitted path exists from `O_l` to `D_l`, the heuristic reports the delivery as infeasible.
+If no permitted path exists for a delivery, the heuristic marks the instance as infeasible.
 
-## 8. Phase 2: Initial Vehicle Assignment
+## 7. Phase 2: Initial Vehicle Assignment
 
-After candidate paths are available, the heuristic assigns deliveries to vehicles.
+After candidate paths are generated, deliveries are assigned to vehicles.
 
-### Delivery Priority
-
-Deliveries that are harder to place should be handled early. A useful priority order is:
+Deliveries should be processed in a priority order so that difficult cases are handled early:
 
 ```text
 priority_l =
@@ -274,181 +165,101 @@ priority_l =
     + penalty_if_few_feasible_vehicles
 ```
 
-This means:
+For each delivery in this order:
 
-- heavy deliveries are assigned early because of capacity;
-- long deliveries are assigned early because of battery range;
-- high-risk deliveries are handled carefully;
-- deliveries with few feasible vehicles should not be left until the end.
-
-### Best Feasible Assignment Step
-
-For each delivery `l` in priority order:
-
-1. try all candidate paths for `l`;
-2. try all vehicles `v`;
+1. test all candidate paths;
+2. test all vehicles;
 3. keep only combinations where:
-   - `Dem_l` fits into remaining capacity of vehicle `v`;
-   - path distance is within `Range_v`;
+   - `Dem_l` fits into the remaining capacity of vehicle `v`;
+   - `path_distance(p) <= Range_v`;
    - all path edges are allowed for `Class_l`;
-4. choose the feasible combination with the lowest incremental score.
+4. choose the feasible path-vehicle combination with the lowest incremental score.
 
-The incremental score includes:
+If no feasible combination exists, the heuristic returns infeasible for the current instance.
 
-```text
-incremental_score =
-    w1 * path_risk
-    + w2 * path_variable_cost
-    + activation_penalty_if_vehicle_not_yet_used
-```
+## 8. Phase 3: Local Search Improvement
 
-If no vehicle-path combination is feasible, the heuristic reports that it could not construct a feasible full solution.
+The initial solution is feasible, but not necessarily good. Local search tries small changes and accepts them only if they improve the score and keep all constraints feasible.
 
-## 9. Phase 3: Local Search Improvement
-
-The initial solution is feasible but may not be high quality. Local search improves it using small changes.
-
-### Move 1: Alternative Path Switch
+### Alternative Path Switch
 
 For one delivery, replace the current path with another candidate path.
 
-Accept the move if:
+This can reduce risk or cost without changing the assigned vehicle.
 
-- the new path is allowed for the delivery class;
-- the assigned vehicle range is still sufficient;
-- the weighted objective improves.
+### Vehicle Reassignment
 
-This move directly improves the network routing part.
+Move one delivery from its current vehicle to another vehicle.
 
-### Move 2: Reassign Delivery to Another Vehicle
+This can reduce cost, improve capacity usage, or avoid using an additional vehicle. The move is accepted only if the target vehicle has enough remaining capacity and range.
 
-Move one delivery from vehicle `v1` to vehicle `v2`.
-
-Accept the move if:
-
-- capacity of `v2` is sufficient;
-- range of `v2` is sufficient for the selected path;
-- total cost and risk objective improves;
-- fixed vehicle cost logic is updated correctly.
-
-This move improves the vehicle-allocation part.
-
-### Move 3: Swap Two Delivery Assignments
+### Assignment Swap
 
 Swap the assigned vehicles of two deliveries.
 
-Accept the move if:
+This can help when two single reassignments are infeasible separately, but feasible together.
 
-- both vehicles remain within capacity;
-- both vehicles can cover their assigned path distances;
-- total objective improves.
+### Combined Path-and-Vehicle Change
 
-This helps when a single reassignment is blocked but a paired exchange is feasible.
+Change both the path and the vehicle for one delivery.
 
-### Move 4: Path-and-Vehicle Combined Change
+This is useful when a safer path is longer and therefore needs a vehicle with a larger range.
 
-For one delivery, change both the path and the assigned vehicle at the same time.
+## 9. Feasibility Checks
 
-This is useful because a low-risk path may be longer and therefore require a different electric truck with sufficient range.
+The heuristic must validate the solution after construction and after local search.
 
-## 10. Constraint Handling
+Checks:
 
-### Transport Duty
-
-Every delivery must be assigned exactly once:
-
-```text
-each l in L has exactly one selected vehicle and one selected path
-```
-
-### Vehicle Capacity
-
-For each vehicle:
+- every delivery has exactly one selected path;
+- every delivery is assigned to exactly one vehicle;
+- every selected path connects `O_l` to `D_l`;
+- no selected edge violates `Allow_{e, Class_l}`;
+- vehicle capacity is respected:
 
 ```text
 sum Dem_l for deliveries assigned to v <= Cap_v
 ```
 
-### Vehicle Activation
-
-A vehicle is active if at least one delivery is assigned to it:
-
-```text
-z_v = 1 if any delivery l uses vehicle v
-```
-
-Fixed cost is counted only for active vehicles.
-
-### Hazardous-Material Restrictions
-
-For every edge in a selected path:
-
-```text
-Allow_{e, Class_l} = 1
-```
-
-Forbidden edges are hard constraints and cannot be used.
-
-### Network Feasibility
-
-Each selected path must be a connected path from origin to destination:
-
-```text
-O_l -> ... -> D_l
-```
-
-This replaces the classic depot-customer-depot route assumption.
-
-### Battery Range
-
-For each delivery and its assigned vehicle:
+- battery range is respected:
 
 ```text
 path_distance_l <= Range_v
 ```
 
-Charging stops are not part of the first heuristic version. They can be added later if the model includes charging infrastructure.
+- fixed cost is counted only for active vehicles;
+- total risk and total cost are recomputed from the selected paths.
 
-## 11. Output of the Heuristic
+Charging stops are not part of the first heuristic version. The first version only checks whether a selected path fits the assigned vehicle range. Charging infrastructure can be added later as an extension.
 
-The heuristic should output:
+## 10. Output
 
-- assigned vehicle for each delivery;
+The heuristic should return:
+
 - selected path for each delivery;
+- assigned vehicle for each delivery;
 - active vehicles;
 - total assigned demand per vehicle;
 - remaining capacity per vehicle;
-- distance per delivery path;
-- risk per delivery path;
-- variable cost per delivery path;
+- distance per delivery;
+- risk per delivery;
+- variable cost per delivery;
 - fixed vehicle cost;
-- total normalized objective;
+- total risk;
+- total cost;
+- normalized objective value;
 - feasibility status;
 - runtime.
 
-This output is directly comparable with the MILP result:
+These outputs are enough to compare the heuristic with the solver result:
 
-- `y_{l,v}` corresponds to the heuristic vehicle assignment;
-- `f_{l,e}` corresponds to the selected path edges;
-- `z_v` corresponds to active vehicles.
+- selected edges correspond to routing decisions;
+- vehicle assignments correspond to assignment decisions;
+- active vehicles correspond to vehicle activation.
 
-## 12. Feasibility Validation
+## 11. Solver Comparison
 
-A separate validation step should check:
-
-- every delivery has exactly one vehicle;
-- every delivery has exactly one connected origin-destination path;
-- no forbidden edge is used;
-- vehicle capacities are respected;
-- vehicle ranges are respected;
-- fixed costs are counted only for active vehicles;
-- total risk, distance, cost, and objective are recomputed from the selected paths.
-
-This is important because the heuristic solution should be credible when compared with the solver.
-
-## 13. Comparison With the Solver
-
-The heuristic should be compared with the MILP on the same data.
+The heuristic should be compared with the solver on the same instances and the same objective interpretation.
 
 Useful metrics:
 
@@ -461,8 +272,8 @@ Useful metrics:
 - active vehicles;
 - capacity usage;
 - solver status;
-- solver MIP gap or best bound;
-- heuristic gap compared with the solver result or bound.
+- solver bound or gap, if available;
+- heuristic gap compared with the solver objective or bound.
 
 If the solver proves optimality:
 
@@ -473,9 +284,9 @@ heuristic_gap_percent =
     * 100
 ```
 
-If the solver does not prove optimality, the report should clearly state whether the heuristic is compared against the solver incumbent or the solver lower bound.
+One important detail: the heuristic should calculate cost from the selected path edges. If the solver uses an approximation for variable cost, the comparison table should make clear which cost definition is used.
 
-## 14. Pseudocode
+## 12. Pseudocode
 
 ```text
 Input:
@@ -487,74 +298,36 @@ Input:
     weights w1 and w2
 
 For each delivery l:
-    remove edges e where Allow_{e, Class_l} = 0
+    remove edges where Allow_{e, Class_l} = 0
     generate candidate paths from O_l to D_l
-    store path risk, distance, and edge list
+    calculate risk, distance, and cost for each path
     if no candidate path exists:
         return infeasible
 
-Sort deliveries by priority:
+Sort deliveries:
     high demand, long path, high risk, few feasible vehicles first
 
-Initialize:
-    no vehicle is active
-    all capacities are unused
-    no delivery is assigned
+Construct initial solution:
+    for each delivery l:
+        test candidate path and vehicle combinations
+        keep combinations satisfying capacity, range, and permission checks
+        choose the lowest incremental score
+        assign delivery to path and vehicle
+        update vehicle capacity and activation
 
-For each delivery l in priority order:
-    best_choice = None
-    for each candidate path p of delivery l:
-        for each vehicle v:
-            if capacity and range are feasible:
-                compute incremental risk-cost score
-                update best_choice if score is lower
-    if best_choice exists:
-        assign delivery l to vehicle v and path p
-        update capacity and vehicle activation
-    else:
-        return infeasible
-
-Local search:
+Improve solution:
     repeat:
-        try alternative path switch
-        try delivery reassignment
-        try swap of vehicle assignments
+        try path switch
+        try vehicle reassignment
+        try assignment swap
         try combined path-and-vehicle change
         accept only feasible improving moves
     until no improvement or limit reached
 
 Validate:
-    check assignment, paths, ADR restrictions, capacity, range, cost, risk
+    check path connectivity, assignment, permissions, capacity, range, risk, cost
 
 Output:
-    selected paths, vehicle assignments, active vehicles,
-    objective, risk, cost, runtime, feasibility status
+    paths, vehicle assignments, active vehicles,
+    risk, cost, objective, runtime, feasibility status
 ```
-
-## 15. Why This Heuristic Fits Better Than the Earlier Route-Insertion Idea
-
-An earlier idea was a classic customer insertion heuristic:
-
-```text
-depot -> customer 1 -> customer 2 -> depot
-```
-
-This is useful for a capacitated delivery tour problem, but the current MILP notebook models each delivery as an origin-destination flow:
-
-```text
-O_l -> ... -> D_l
-```
-
-Therefore, the heuristic should not focus first on inserting customers into depot tours. It should first choose feasible network paths for deliveries and then assign these deliveries to vehicles. This makes the heuristic consistent with:
-
-- the flow variables `f_{l,e}`;
-- the assignment variables `y_{l,v}`;
-- the activation variables `z_v`;
-- the ADR edge restrictions `Allow_{e,k}`;
-- the electric truck range constraint.
-
-## 16. Review Meeting Explanation
-
-For the review meeting, the heuristic can be explained as follows:
-
-> Our MILP model treats each hazardous-material delivery as a flow from its origin to its destination and assigns each delivery to an electric truck. Therefore, our heuristic follows the same logic. First, for every delivery, we generate several legally allowed candidate paths through the road network, using edge risk values based on population density, accident rate, and nature reserve proximity. Then we assign each delivery to a feasible electric truck while checking payload capacity and battery range. After that, local search improves the solution by switching paths, reassigning deliveries, or swapping vehicle assignments. This gives us a fast method that is directly comparable with the solver in terms of selected edges, vehicle assignment, active vehicles, risk, cost, runtime, and feasibility.
