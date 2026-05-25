@@ -2,7 +2,7 @@
 
 ## Project Direction
 
-Our project focuses on route planning for hazardous-material transports. The decision maker is a transport company or logistics planner who must decide:
+Our project focuses on route planning for hazardous-material transports. In the current project direction, the fleet consists of electric heavy trucks, so vehicle range and energy-related costs may also matter. The decision maker is a transport company or logistics planner who must decide:
 
 - which vehicle serves which delivery;
 - which route each vehicle should take;
@@ -12,7 +12,7 @@ The main objective is to minimize the total risk caused by hazardous-material tr
 
 - population density along the route;
 - accident probability on road segments;
-- proximity to critical infrastructure;
+- proximity to sensitive areas such as nature reserves or critical infrastructure;
 - general hazard potential of the route.
 
 At the same time, the logistics planner cannot ignore transport cost. Therefore, cost is treated as a secondary objective, including factors such as distance, travel time, energy consumption, and tolls.
@@ -25,10 +25,10 @@ In simple words, the project asks:
 
 The project belongs mainly to the Vehicle Routing Problem (VRP) family. More precisely, it is a Hazardous Materials Vehicle Routing Problem (HMVRP), because the transported goods create additional safety and regulatory constraints that do not appear in a normal delivery VRP.
 
-It can also be interpreted as a multi-objective network flow problem:
+It can also be interpreted as a constrained multi-commodity network flow problem:
 
 - vehicles move through a network of nodes and arcs;
-- every delivery must be transported;
+- every delivery creates a separate flow through the network;
 - only valid and permitted arcs may be used;
 - the chosen flow of vehicles creates both risk and cost.
 
@@ -105,9 +105,10 @@ Possible modeling elements to discuss with the team:
 - vehicle-route decisions on a network;
 - delivery assignment and service constraints;
 - vehicle capacity and limited fleet size;
-- road permissions or prohibited arcs;
-- a risk measure based on accident probability, population exposure, and route-specific hazard factors;
-- a cost measure based on distance, travel time, energy use, tolls, or a combination of these.
+- road permissions or prohibited arcs, possibly based on ADR classes;
+- a risk measure based on accident probability, population exposure, nature reserve proximity, and route-specific hazard factors;
+- a cost measure based on distance, travel time, energy use, charging cost, tolls, or a combination of these;
+- electric-truck constraints such as battery range, if this remains part of the final model.
 
 ### Heuristic direction
 
@@ -122,7 +123,7 @@ This direction is stronger than a pure nearest-neighbor rule, but still easier t
 
 ### Data and experiment direction
 
-The literature also shows that the data should be meaningful from a transport-risk perspective. Accident data, population exposure, road restrictions, infrastructure sensitivity, vehicle data, and cost data can all influence the final routing decision.
+The literature also shows that the data should be meaningful from a transport-risk perspective. Accident data, population exposure, road restrictions, sensitive areas, ADR information, vehicle data, charging infrastructure, and cost data can all influence the final routing decision.
 
 For experiments, the team should later decide which instance sizes and metrics fit the solver and heuristic implementation. The literature suggests that useful comparison metrics may include:
 
@@ -142,6 +143,9 @@ The literature leaves several choices open. These should be decided together wit
 - Are forbidden roads completely removed, or are risky roads allowed with high penalties?
 - Do we include time windows now, or only route duration limits?
 - Is risk fixed per road segment, or does it increase with load and vehicle type?
+- Should ADR classes and tunnel restrictions be modeled directly from the ADR data?
+- Should battery range be a hard constraint for electric trucks?
+- Should charging stops be included now, or left for a later extension?
 - Do we use one weighted objective, or do we generate several trade-off solutions with different risk-cost weights?
 
 These points can help the team decide together which modeling choices are realistic for the next project steps.
