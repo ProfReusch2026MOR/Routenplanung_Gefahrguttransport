@@ -20,7 +20,7 @@ Welche Fahrzeuge bedienen welche Gefahrgutlieferungen auf welchen zulässigen Ro
 - Pflegt und aktualisiert README, Projektstatus und Meeting-Dokumentation.
 - Verwaltet GitHub-Issues (Planung, Priorisierung, Nachverfolgung).
 - Führt Pull-Request-Reviews durch und steuert die Integration aller Teilbeiträge.
-- Übernimmt Integrationsmanagement zwischen Daten, Modell, Solver und Heuristik.
+- Unterstützt bei Implementation des Solvers
 
 ### Timo - Datenmodell und Datengenerierung
 - Definiert das Datenmodell für Knoten, Kanten, Lieferungen, Fahrzeuge und Risikofaktoren.
@@ -55,16 +55,16 @@ Welche Fahrzeuge bedienen welche Gefahrgutlieferungen auf welchen zulässigen Ro
 
 *   **Modell:** Soweit Implementiert
 
-*   **Solver:** Implementiert, Daten müssen noch eingebunden werden
+*   **Solver:** Implementation gestartet, Daten müssen noch eingebunden werden
 
-*   **Heuristik:** Literatur rausgesucht, Ansatz noch suchen
+*   **Heuristik:** Literatur rausgesucht, Ansatz noch definieren
 
 *   **Experimente:** tbd
 
 ## 6) To-Dos
 ### Offene Aufgaben
 *   [ ] Streetview Daten bekommen -Timo, Jonas
-*   [ ] Implementation in Pulp -Jonas
+*   [ ] Implementation in Pulp -Jonas, Luca
 *   [ ] Literatur recherchieren -Fuqiang
 *   [ ] Heurstischen Ansatz entwerfen für HMVRP -Fuqiang
 
@@ -87,4 +87,4 @@ Welche Fahrzeuge bedienen welche Gefahrgutlieferungen auf welchen zulässigen Ro
 *   **Bekannte Probleme/Risiken:** Daten runterladen dauert zu lange und bricht ab durch zu wenig Speicher
 
 *   **Fragen für Feedback:**
-    1. tbd
+    1. Können wir die personenebezogenen Rollen (admin) in Github rauslöschen, wenn wir ein Team erstellt haben?
