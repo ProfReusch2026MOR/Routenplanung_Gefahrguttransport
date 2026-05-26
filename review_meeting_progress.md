@@ -5,11 +5,11 @@ Operations Research
 Hazardous Materials Vehicle Routing Problem (HMVRP)
 
 ## 2) Teammitglieder
-- Luca Siewecke
-- Timo Schöddert
-- Maher Darweesh
-- Jonas Beckmann
-- Fuqiang Zhang
+- Luca Siewecke  (lucasiewecke)
+- Timo Schöddert (timoschoeddert247)
+- Maher Darweesh (maherd18)
+- Jonas Beckmann (jbeckmann784)
+- Fuqiang Zhang  (viikly)
 
 ## 3) Kern-Entscheidungsfrage
 Welche Fahrzeuge bedienen welche Gefahrgutlieferungen auf welchen zulässigen Routen so, dass das Gesamtrisiko minimiert und wirtschaftliche Transportkosten unter allen Logistikrestriktionen eingehalten werden?
@@ -84,7 +84,16 @@ Welche Fahrzeuge bedienen welche Gefahrgutlieferungen auf welchen zulässigen Ro
 *   Cuneo et al. (2018): Risk-based multi-objective vehicle routing in fuel logistics
 
 ## 8) Bekannte Probleme, Risiken & Fragen für Feedback
-*   **Bekannte Probleme/Risiken:** Daten runterladen dauert zu lange und bricht ab durch zu wenig Speicher
+*   **Bekannte Probleme/Risiken:** 
+    1. Daten runterladen dauert zu lange und bricht ab durch zu wenig Speicher
+    2. Dateien teilweise zu groß und können nicht committet werden
 
 *   **Fragen für Feedback:**
-    1. Können wir die personenebezogenen Rollen (admin) in Github rauslöschen, wenn wir ein Team erstellt haben?
+    1. 
+
+<!-- 
+    - Mehr Leute an Literatur arbeiten
+    - Literatur sollte sich mehr auf bestimme Gefahrentypen konzentrieren (vorher definieren welche für uns eine Rolle spielen)
+    - Projektdokumentation gestalten wie wir wollen, am Ende nur PDF und Github Repo zählen in Bewertung
+    - Wer sagt uns das wir von der kürzesten Route abweichen müssen -> Gesetze wie sind die formuliert, was schließen sie aus usw. Spielraum beachten
+-->
