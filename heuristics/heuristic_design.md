@@ -25,7 +25,7 @@ This method fits the project because the routing decision and the vehicle decisi
 The method matches the current data and model structure:
 
 - deliveries already have origin and destination nodes;
-- edges carry distance, risk, cost, and permission information;
+- edges carry length, risk, cost, and permission information;
 - vehicles have capacity, fixed cost, variable cost, and battery range;
 - a feasible solution can be represented by selected path edges, vehicle assignments, and active vehicles.
 
@@ -34,6 +34,8 @@ This makes the heuristic easy to compare with the solver while still keeping the
 ## 4. Input Data
 
 The heuristic uses the same conceptual data as the mathematical model.
+
+The heuristic assumes that edge risk scores and legal feasibility parameters are provided by the data and model work packages. It does not derive legal restrictions itself; it uses `Risk_{e,k}` and `Allow_{e,k}` to build feasible paths and evaluate risk-cost trade-offs.
 
 ### Sets
 
@@ -59,7 +61,7 @@ For each vehicle `v`:
 - `Cap_v`: payload capacity;
 - `Range_v`: battery range;
 - `FC_v`: fixed cost if the vehicle is used;
-- `VC_{v,e}`: variable cost on edge `e`, based on distance and energy cost.
+- `VC_{v,e}`: variable cost on edge `e`, based on length and energy cost.
 
 ### Edge Data
 
@@ -86,6 +88,8 @@ where:
 - `AccRate_e` represents accident exposure;
 - `NatRes_e` represents proximity to sensitive natural areas;
 - `alpha + beta + gamma = 1`.
+
+This is a simplified weighted risk index. It does not calculate accident probability times consequence directly, but it keeps both sides visible: accident exposure through `AccRate_e` and possible human or ecological consequences through `PopDens_e` and `NatRes_e`. If the model later includes class-specific severity factors, `Class_l` can also influence the risk score more directly.
 
 The variable vehicle cost on an edge can be scored as:
 
@@ -124,6 +128,8 @@ Before searching for paths, remove all edges that are not allowed for the delive
 Allow_{e, Class_l} = 0  =>  edge e is not available
 ```
 
+Legal feasibility is a hard constraint. Forbidden edges are not high-cost alternatives; they are infeasible and cannot appear in candidate paths or in later local-search moves. The exact source of `Allow_{e,k}` can include ADR rules, tunnel restrictions, dangerous-goods routing rules, or local road restrictions, but the heuristic only uses the final permission value.
+
 Then generate a small path set, for example:
 
 - one lowest-risk path;
@@ -131,10 +137,12 @@ Then generate a small path set, for example:
 - one weighted risk-cost path;
 - a few alternatives from k-shortest path logic, if available.
 
+If variable cost differs strongly between vehicles, cost-based candidate paths can either use a vehicle-independent proxy cost or be generated separately for relevant vehicle types.
+
 Each candidate path stores:
 
 - edge sequence;
-- total distance;
+- total path length;
 - total risk;
 - total variable cost per vehicle;
 - feasible vehicles based on range.
@@ -160,7 +168,7 @@ For each delivery in this order:
 1. test all candidate paths;
 2. test all vehicles;
 3. keep only combinations where:
-   - `Dem_l <= Cap_v`;
+   - assigning `l` to `v` keeps the cumulative vehicle load feasible;
    - `path_length(p) <= Range_v`;
    - all path edges are allowed for `Class_l`;
 4. choose the feasible path-vehicle combination with the lowest incremental score.
@@ -179,11 +187,15 @@ For one delivery, replace the current path with another candidate path.
 
 This can reduce risk or cost without changing the assigned vehicle.
 
+The move is accepted only if the new path is connected from `O_l` to `D_l`, all edges are legally allowed, range remains feasible, and risk and cost are recomputed.
+
 ### Vehicle Reassignment
 
 Move one delivery from its current vehicle to another vehicle.
 
 This can reduce cost or avoid using an additional vehicle. The move is accepted only if the target vehicle can carry the delivery and cover the selected path length.
+
+After the move, cumulative capacity, range feasibility, vehicle activation, fixed cost, total risk, and total cost are updated.
 
 ### Assignment Swap
 
@@ -191,11 +203,15 @@ Swap the assigned vehicles of two deliveries.
 
 This can help when two single reassignments are infeasible separately, but feasible together.
 
+The swap is accepted only if both vehicles remain feasible after the exchange.
+
 ### Combined Path-and-Vehicle Change
 
 Change both the path and the vehicle for one delivery.
 
 This is useful when a safer path is longer and therefore needs a vehicle with a larger range.
+
+This move is accepted only after checking path permission, path connectivity, vehicle capacity, range, active vehicle status, and the updated objective value.
 
 ## 9. Feasibility Checks
 
@@ -207,13 +223,15 @@ Checks:
 - every delivery is assigned to exactly one vehicle;
 - every selected path connects `O_l` to `D_l`;
 - no selected edge violates `Allow_{e, Class_l}`;
-- vehicle capacity is respected for each assigned delivery:
+- vehicle capacity is respected:
 
 ```text
-Dem_l <= Cap_v
+sum Dem_l for deliveries assigned to v <= Cap_v
 ```
 
-In the first heuristic version, each delivery is checked against the vehicle capacity individually. The heuristic does not yet schedule the chronological order of several deliveries assigned to the same vehicle. Therefore, cumulative vehicle load is only used if the planning scenario assumes that these deliveries are carried together in the same batch.
+In the current design, the heuristic uses the planning-batch interpretation: all deliveries assigned to the same vehicle count against the vehicle capacity. If the team later treats each delivery as a separate trip with unloading between trips, this can be relaxed to a per-delivery check `Dem_l <= Cap_v`, but then an additional scheduling or trip-count assumption should be stated.
+
+This means that vehicle assignment is interpreted as a batch-capacity decision, not as a chronological multi-stop route. The heuristic does not model repositioning between different origins or the sequence in which a vehicle serves several deliveries.
 
 - battery range is respected:
 
@@ -233,8 +251,9 @@ The heuristic should return:
 - selected path for each delivery;
 - assigned vehicle for each delivery;
 - active vehicles;
-- capacity feasibility per assigned delivery;
-- distance per delivery;
+- total assigned demand per vehicle;
+- remaining capacity per vehicle;
+- path length per delivery;
 - risk per delivery;
 - variable cost per delivery;
 - fixed vehicle cost;
@@ -263,7 +282,7 @@ Useful metrics:
 - fixed cost and variable cost separately;
 - runtime;
 - active vehicles;
-- capacity feasibility;
+- capacity usage;
 - solver status;
 - solver bound or gap, if available;
 - heuristic gap compared with the solver objective or bound.
@@ -293,7 +312,7 @@ Input:
 For each delivery l:
     remove edges where Allow_{e, Class_l} = 0
     generate candidate paths from O_l to D_l
-    calculate risk, distance, and cost for each path
+    calculate risk, length, and cost for each path
     if no candidate path exists:
         return infeasible
 
@@ -306,7 +325,7 @@ Construct initial solution:
         keep combinations satisfying capacity, range, and permission checks
         choose the lowest incremental score
         assign delivery to path and vehicle
-        update vehicle activation
+        update vehicle load and activation
 
 Improve solution:
     repeat:
@@ -324,3 +343,14 @@ Output:
     paths, vehicle assignments, active vehicles,
     risk, cost, objective, runtime, feasibility status
 ```
+
+## 13. Dependencies and Next Steps
+
+Implementation depends on a few project decisions becoming stable:
+
+- finalized data format for nodes, edges, deliveries, vehicles, risks, and permissions;
+- final objective weights `w1` and `w2`;
+- solver output format for comparing selected edges, vehicle assignments, active vehicles, objective value, risk, and cost;
+- small, medium, and large test instances.
+
+The next practical step is to create a toy prototype on a small artificial instance and then adapt it to the final data format.
