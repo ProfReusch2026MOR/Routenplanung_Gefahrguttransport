@@ -4,7 +4,7 @@
 
 This document defines the heuristic for the routing-and-assignment part of the project.
 
-Each delivery `l` is treated as an origin-destination task with `O_l`, `D_l`, `Dem_l`, and `Class_l`. The heuristic therefore chooses one feasible network path for each delivery and assigns that delivery to a suitable electric truck. It does not build a classic depot-customer-depot tour.
+Each delivery `l` is treated as an independent one-way origin-destination task with `O_l`, `D_l`, `Dem_l`, and `Class_l`. The heuristic chooses one feasible network path and one suitable electric truck for that delivery. It does not calculate a return trip, schedule the order of several deliveries, or model vehicle repositioning between tasks. Payload capacity is released after unloading.
 
 ## 2. Selected Method
 
@@ -35,7 +35,7 @@ This makes the heuristic easy to compare with the solver while still keeping the
 
 The heuristic uses the same conceptual data as the mathematical model.
 
-The heuristic assumes that edge risk scores and legal feasibility parameters are provided by the data and model work packages. It does not derive legal restrictions itself; it uses `Risk_{e,k}` and `Allow_{e,k}` to build feasible paths and evaluate risk-cost trade-offs.
+The heuristic assumes that edge risk scores and legal feasibility parameters are provided by the data and model work packages. It does not derive legal restrictions itself; it uses `Risk_{e,k}` and `Allow_{e,k}` to build feasible paths and evaluate risk-cost trade-offs. Origin and destination coordinates must both map to an eligible road-network node within the agreed mapping threshold.
 
 ### Sets
 
@@ -76,20 +76,22 @@ For each directed edge `e` and hazardous-material class `k`:
 The heuristic should use the same risk idea as the model. A practical edge risk score is:
 
 ```text
-Risk_{e,k} =
-    alpha * PopDens_e
+RiskRate_{e,k} =
+    alpha * PopRate_e
     + beta * AccRate_e
-    + gamma * NatRes_e
+    + gamma * NatRate_e
+
+Risk_{e,k} = RiskRate_{e,k} * Len_e
 ```
 
 where:
 
-- `PopDens_e` represents population exposure;
-- `AccRate_e` represents accident exposure;
-- `NatRes_e` represents proximity to sensitive natural areas;
+- `PopRate_e` represents normalized population exposure per unit of distance;
+- `AccRate_e` represents normalized accident exposure per unit of distance;
+- `NatRate_e` represents normalized proximity to sensitive natural areas per unit of distance;
 - `alpha + beta + gamma = 1`.
 
-This is a simplified weighted risk index. It does not calculate accident probability times consequence directly, but it keeps both sides visible: accident exposure through `AccRate_e` and possible human or ecological consequences through `PopDens_e` and `NatRes_e`. If the model later includes class-specific severity factors, `Class_l` can also influence the risk score more directly.
+This is a simplified length-weighted risk index. Multiplying the rate by `Len_e` makes path risk additive and prevents the result from changing merely because the same road is split into more graph edges. The normalization maxima and actual source fields must be recorded and shared with the solver.
 
 The variable vehicle cost on an edge can be scored as:
 
@@ -99,13 +101,16 @@ VC_{v,e} =
     + Len_e * energy_kwh_per_km_v * energy_price_e
 ```
 
-For one delivery `l`, vehicle `v`, and candidate path `p`, the heuristic score is:
+For one delivery `l`, vehicle `v`, and candidate path `p`, the heuristic uses:
 
 ```text
-score(l, v, p) =
-    w1 * normalized_path_risk(l, p)
-    + w2 * normalized_path_cost(v, p)
-    + activation_penalty(v)
+incremental_cost(l, v, p) =
+    path_cost(v, p)
+    + FC_v if v is not active, otherwise 0
+
+assignment_score(l, v, p) =
+    w1 * path_risk(l, p) / fixed_path_risk_scale
+    + w2 * incremental_cost(l, v, p) / fixed_cost_scale
 ```
 
 with:
@@ -116,7 +121,7 @@ path_cost(v, p) = sum VC_{v,e} for all e in p
 path_length(p) = sum Len_e for all e in p
 ```
 
-The activation penalty is used only when a previously unused vehicle becomes active. This keeps fixed vehicle cost from being counted multiple times.
+Both scales are calculated once from the complete candidate set and then kept fixed for the whole assignment run. Ties are resolved by assignment score, path risk, incremental cost, vehicle ID, and path label. Fixed vehicle cost is added only when a previously unused vehicle becomes active.
 
 ## 6. Phase 1: Candidate Path Generation
 
@@ -136,6 +141,16 @@ Then generate a small path set, for example:
 - one lowest-cost or shortest path;
 - one weighted risk-cost path;
 - a few alternatives from k-shortest path logic, if available.
+
+The weighted path uses one pair of global scales for the complete run:
+
+```text
+weighted_edge_cost(e) =
+    w1 * Risk_e / fixed_weighted_path_risk_scale
+    + w2 * Len_e / fixed_weighted_path_length_scale
+```
+
+The scales are calculated once from the complete set of distance and risk candidates before weighted-path generation. They remain unchanged across all deliveries and permission masks and are recorded in the output metadata. This keeps the edge metric additive while making `w1` and `w2` meaningful across risk and distance units.
 
 If variable cost differs strongly between vehicles, cost-based candidate paths can either use a vehicle-independent proxy cost or be generated separately for relevant vehicle types.
 
@@ -168,7 +183,7 @@ For each delivery in this order:
 1. test all candidate paths;
 2. test all vehicles;
 3. keep only combinations where:
-   - assigning `l` to `v` keeps the cumulative vehicle load feasible;
+   - `Dem_l <= Cap_v` for this independent delivery;
    - `path_length(p) <= Range_v`;
    - all path edges are allowed for `Class_l`;
 4. choose the feasible path-vehicle combination with the lowest incremental score.
@@ -195,7 +210,7 @@ Move one delivery from its current vehicle to another vehicle.
 
 This can reduce cost or avoid using an additional vehicle. The move is accepted only if the target vehicle can carry the delivery and cover the selected path length.
 
-After the move, cumulative capacity, range feasibility, vehicle activation, fixed cost, total risk, and total cost are updated.
+After the move, per-delivery capacity, range feasibility, vehicle activation, fixed cost, total risk, and total cost are updated.
 
 ### Assignment Swap
 
@@ -226,12 +241,10 @@ Checks:
 - vehicle capacity is respected:
 
 ```text
-sum Dem_l for deliveries assigned to v <= Cap_v
+Dem_l <= Cap_v
 ```
 
-In the current design, the heuristic uses the planning-batch interpretation: all deliveries assigned to the same vehicle count against the vehicle capacity. If the team later treats each delivery as a separate trip with unloading between trips, this can be relaxed to a per-delivery check `Dem_l <= Cap_v`, but then an additional scheduling or trip-count assumption should be stated.
-
-This means that vehicle assignment is interpreted as a batch-capacity decision, not as a chronological multi-stop route. The heuristic does not model repositioning between different origins or the sequence in which a vehicle serves several deliveries.
+Each delivery is an independent one-way OD task. The vehicle unloads at `D_l`, after which its payload capacity is available for another delivery. The current heuristic does not schedule when deliveries occur, model repositioning between tasks, or add a return path.
 
 - battery range is respected:
 
@@ -251,12 +264,13 @@ The heuristic should return:
 - selected path for each delivery;
 - assigned vehicle for each delivery;
 - active vehicles;
-- total assigned demand per vehicle;
-- remaining capacity per vehicle;
+- capacity feasibility per delivery;
+- mapping status and coordinate-to-node distance;
 - path length per delivery;
 - risk per delivery;
 - variable cost per delivery;
 - fixed vehicle cost;
+- risk normalization metadata and assignment scales;
 - total risk;
 - total cost;
 - normalized objective value;
@@ -325,7 +339,7 @@ Construct initial solution:
         keep combinations satisfying capacity, range, and permission checks
         choose the lowest incremental score
         assign delivery to path and vehicle
-        update vehicle load and activation
+        update vehicle activation
 
 Improve solution:
     repeat:
