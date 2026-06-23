@@ -17,17 +17,21 @@ import sys
 import time
 from typing import Dict, Iterable, List, Optional, Tuple
 
+MODULE_START_SECONDS = time.perf_counter()
+
 import numpy as np
 import pandas as pd
 from scipy.sparse import csr_matrix
-from scipy.sparse.csgraph import dijkstra
+from scipy.sparse.csgraph import connected_components, dijkstra
 from scipy.spatial import cKDTree
 
 try:
     from real_data_adapter import (
         AdapterResult,
+        DEFAULT_REGION,
         MappedDelivery,
         MappedVehicle,
+        SUPPORTED_REGIONS,
         build_adapter_result,
         chord_to_meters,
         latlon_to_xyz,
@@ -35,8 +39,10 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - module execution fallback
     from heuristics.real_data_adapter import (
         AdapterResult,
+        DEFAULT_REGION,
         MappedDelivery,
         MappedVehicle,
+        SUPPORTED_REGIONS,
         build_adapter_result,
         chord_to_meters,
         latlon_to_xyz,
@@ -47,6 +53,37 @@ RISK_WEIGHT = 0.65
 COST_WEIGHT = 0.35
 WEIGHT_EPSILON = 1e-9
 DESTINATION_MAPPING_CANDIDATES = 250
+DEFAULT_NETWORK_MODE = "solver_cropped"
+SUPPORTED_NETWORK_MODES = ("full", "solver_cropped")
+SOLVER_CROP_BUFFER = 0.3
+
+HAZARD_CLASS_FACTORS = {
+    "3": 1.0,
+    "2 (TOC)": 0.8,
+    "1.1D": 2.0,
+    "8": 0.9,
+    "9": 0.7,
+    "6": 1.5,
+    "2": 0.8,
+}
+
+TUNNEL_CATEGORY_MAPPING = {
+    "no": "A",
+    "": "A",
+    "none": "A",
+    "nan": "A",
+    "building_passage": "B",
+    "covered": "C",
+    "yes": "D",
+    "avalanche_protector": "D",
+}
+
+FORBIDDEN_CLASSES_BY_TUNNEL_CATEGORY = {
+    "A": frozenset(),
+    "B": frozenset(),
+    "C": frozenset({"1.1D", "1.5D"}),
+    "D": frozenset({"1.1D", "1.5D", "6", "9"}),
+}
 
 
 @dataclass(frozen=True)
@@ -67,6 +104,10 @@ class ResolvedMapping:
 @dataclass(frozen=True)
 class PathCandidate:
     delivery_id: str
+    destination_name: str
+    demand_kg: float
+    hazard_class: str
+    hazard_class_factor: float
     label: str
     mapping_status: str
     mapping_feasible: bool
@@ -97,6 +138,18 @@ class PathCandidate:
 class HeuristicResult:
     candidates: List[PathCandidate]
     selected: List[PathCandidate]
+    region: str
+    network_mode: str
+    risk_weight: float
+    cost_weight: float
+    startup_seconds: float
+    data_preparation_seconds: float
+    network_preprocessing_seconds: float
+    mapping_seconds: float
+    candidate_generation_seconds: float
+    vehicle_assignment_seconds: float
+    export_seconds: float
+    end_to_end_runtime_seconds: float
     runtime_seconds: float
     total_risk: float
     total_variable_cost: float
@@ -113,6 +166,7 @@ class HeuristicResult:
     weighted_path_length_scale: float
     max_mapping_distance_m: float
     risk_metadata: Dict[str, object]
+    data_warnings: Tuple[str, ...]
 
 
 def build_destination_options(
@@ -143,6 +197,54 @@ def build_destination_options(
                 seen.add(node)
         options[delivery.delivery_id] = delivery_options
     return options
+
+
+def validate_objective_weights(risk_weight: float, cost_weight: float) -> None:
+    if risk_weight < 0 or cost_weight < 0:
+        raise ValueError("Risk and cost weights must be non-negative.")
+    if not np.isclose(risk_weight + cost_weight, 1.0):
+        raise ValueError("Risk and cost weights must sum to 1.0.")
+
+
+def hazard_class_factor(hazard_class: str) -> float:
+    return HAZARD_CLASS_FACTORS.get(str(hazard_class).strip(), 1.0)
+
+
+def tunnel_category(tunnel_value: object) -> str:
+    normalized = str(tunnel_value or "").strip().lower()
+    return TUNNEL_CATEGORY_MAPPING.get(normalized, "A")
+
+
+def tunnel_allowed(tunnel_value: object, hazard_class: str) -> bool:
+    category = tunnel_category(tunnel_value)
+    forbidden = FORBIDDEN_CLASSES_BY_TUNNEL_CATEGORY[category]
+    return str(hazard_class).strip() not in forbidden
+
+
+def apply_hazard_class_risk(
+    routing_table: pd.DataFrame,
+    hazard_class: str,
+) -> pd.DataFrame:
+    adjusted = routing_table.copy()
+    factor = hazard_class_factor(hazard_class)
+    if "risk_rate_per_km" in adjusted.columns:
+        adjusted_rate = (
+            pd.to_numeric(adjusted["risk_rate_per_km"], errors="coerce")
+            .fillna(0.0)
+            .clip(lower=0.0)
+            .mul(factor)
+            .clip(upper=1.0)
+        )
+        adjusted["risk_score"] = adjusted_rate
+    else:
+        adjusted["risk_score"] = (
+            pd.to_numeric(adjusted["risk_score"], errors="coerce")
+            .fillna(0.0)
+            .clip(lower=0.0)
+            .mul(factor)
+        )
+    adjusted["risk_weight"] = adjusted["risk_score"]
+    return adjusted
 
 
 def attach_oneway_information(edge_table: pd.DataFrame, data_dir: Path) -> pd.DataFrame:
@@ -177,13 +279,16 @@ def add_weighted_search_cost(
     routing_table: pd.DataFrame,
     fixed_risk_scale: float,
     fixed_length_scale: float,
+    risk_weight: float = RISK_WEIGHT,
+    cost_weight: float = COST_WEIGHT,
 ) -> pd.DataFrame:
     if fixed_risk_scale <= 0 or fixed_length_scale <= 0:
         raise ValueError("Weighted-search scales must be positive.")
+    validate_objective_weights(risk_weight, cost_weight)
     routing_table = routing_table.copy()
     routing_table["weighted_search_cost"] = (
-        RISK_WEIGHT * routing_table["risk_score"] / fixed_risk_scale
-        + COST_WEIGHT * routing_table["length_km"] / fixed_length_scale
+        risk_weight * routing_table["risk_score"] / fixed_risk_scale
+        + cost_weight * routing_table["length_km"] / fixed_length_scale
     )
     return routing_table
 
@@ -207,7 +312,10 @@ def build_routing_table(edge_table: pd.DataFrame) -> pd.DataFrame:
         "distance_weight",
         "risk_weight",
     ]
+    if "risk_rate_per_km" in edge_table.columns:
+        columns.append("risk_rate_per_km")
     base = edge_table[columns].copy()
+    base["tunnel_category"] = base["tunnel"].map(tunnel_category)
     oneway = base["oneway"].astype(str).str.strip().str.lower()
     bidirectional = oneway.isin(["no", "false", "0"])
     forward_only = oneway.isin(["yes", "true", "1"])
@@ -238,11 +346,23 @@ def build_graph_context(routing_table: pd.DataFrame) -> GraphContext:
 def collapse_parallel_edges(
     routing_table: pd.DataFrame,
     metric_column: str,
-    avoid_tunnels: bool,
+    hazard_class: Optional[str],
 ) -> pd.DataFrame:
     eligible = routing_table
-    if avoid_tunnels:
-        eligible = eligible.loc[~eligible["is_tunnel_edge"].to_numpy(dtype=bool)]
+    if hazard_class is not None:
+        forbidden = FORBIDDEN_CLASSES_BY_TUNNEL_CATEGORY.get(
+            "D",
+            frozenset(),
+        )
+        if str(hazard_class).strip() in forbidden:
+            allowed_categories = [
+                category
+                for category, blocked_classes in FORBIDDEN_CLASSES_BY_TUNNEL_CATEGORY.items()
+                if str(hazard_class).strip() not in blocked_classes
+            ]
+            eligible = eligible.loc[
+                eligible["tunnel_category"].isin(allowed_categories)
+            ]
     ordered = eligible.sort_values(
         [
             "route_u",
@@ -280,6 +400,122 @@ def build_sparse_graph(
         (weights, (rows, columns)),
         shape=(len(context.node_ids), len(context.node_ids)),
     )
+
+
+def filter_largest_strong_component(routing_table: pd.DataFrame) -> pd.DataFrame:
+    context = build_graph_context(routing_table)
+    topology_edges = collapse_parallel_edges(
+        routing_table,
+        "distance_weight",
+        hazard_class=None,
+    )
+    graph = build_sparse_graph(context, topology_edges, "distance_weight")
+    component_count, labels = connected_components(
+        graph,
+        directed=True,
+        connection="strong",
+        return_labels=True,
+    )
+    if component_count <= 1:
+        return routing_table
+    largest_label = int(np.argmax(np.bincount(labels)))
+    largest_nodes = context.node_ids[labels == largest_label]
+    return routing_table.loc[
+        routing_table["route_u"].isin(largest_nodes)
+        & routing_table["route_v"].isin(largest_nodes)
+    ].reset_index(drop=True)
+
+
+def attach_route_coordinates(
+    routing_table: pd.DataFrame,
+    node_table: pd.DataFrame,
+) -> pd.DataFrame:
+    coordinates = node_table.drop_duplicates("node").set_index("node")
+    result = routing_table.copy()
+    for endpoint in ("route_u", "route_v"):
+        result[f"{endpoint}_lat"] = result[endpoint].map(coordinates["lat"])
+        result[f"{endpoint}_lon"] = result[endpoint].map(coordinates["lon"])
+    return result
+
+
+def crop_delivery_edges(
+    routing_table: pd.DataFrame,
+    origin_node: int,
+    destination_node: int,
+    node_table: pd.DataFrame,
+    buffer: float = SOLVER_CROP_BUFFER,
+) -> pd.DataFrame:
+    coordinates = node_table.drop_duplicates("node").set_index("node")
+    if origin_node not in coordinates.index or destination_node not in coordinates.index:
+        return routing_table.iloc[0:0].copy()
+    origin = coordinates.loc[origin_node]
+    destination = coordinates.loc[destination_node]
+    min_lat, max_lat = sorted((float(origin["lat"]), float(destination["lat"])))
+    min_lon, max_lon = sorted((float(origin["lon"]), float(destination["lon"])))
+    lat_buffer = max((max_lat - min_lat) * buffer, 0.02)
+    lon_buffer = max((max_lon - min_lon) * buffer, 0.02)
+
+    required = {
+        "route_u_lat",
+        "route_u_lon",
+        "route_v_lat",
+        "route_v_lon",
+    }
+    with_coordinates = routing_table
+    if not required.issubset(with_coordinates.columns):
+        with_coordinates = attach_route_coordinates(routing_table, node_table)
+    coordinate_missing = with_coordinates[list(required)].isna().any(axis=1)
+    u_inside = (
+        with_coordinates["route_u_lat"].between(
+            min_lat - lat_buffer,
+            max_lat + lat_buffer,
+        )
+        & with_coordinates["route_u_lon"].between(
+            min_lon - lon_buffer,
+            max_lon + lon_buffer,
+        )
+    )
+    v_inside = (
+        with_coordinates["route_v_lat"].between(
+            min_lat - lat_buffer,
+            max_lat + lat_buffer,
+        )
+        & with_coordinates["route_v_lon"].between(
+            min_lon - lon_buffer,
+            max_lon + lon_buffer,
+        )
+    )
+    return with_coordinates.loc[coordinate_missing | (u_inside & v_inside)].reset_index(
+        drop=True
+    )
+
+
+def build_delivery_routing_tables(
+    routing_table: pd.DataFrame,
+    node_table: pd.DataFrame,
+    deliveries: List[MappedDelivery],
+    mappings: Dict[str, ResolvedMapping],
+    network_mode: str,
+) -> Dict[str, pd.DataFrame]:
+    if network_mode not in SUPPORTED_NETWORK_MODES:
+        raise ValueError(f"Unsupported network mode: {network_mode}")
+    if network_mode == "full":
+        return {delivery.delivery_id: routing_table for delivery in deliveries}
+
+    with_coordinates = attach_route_coordinates(routing_table, node_table)
+    tables: Dict[str, pd.DataFrame] = {}
+    for delivery in deliveries:
+        mapping = mappings[delivery.delivery_id]
+        if not mapping.feasible or mapping.target_node is None:
+            tables[delivery.delivery_id] = with_coordinates.iloc[0:0].copy()
+            continue
+        tables[delivery.delivery_id] = crop_delivery_edges(
+            with_coordinates,
+            delivery.origin_node,
+            int(mapping.target_node),
+            node_table,
+        )
+    return tables
 
 
 def reconstruct_node_path(
@@ -320,11 +556,6 @@ def path_edges_from_nodes(
     return merged.sort_values("step")
 
 
-def delivery_requires_tunnel_avoidance(delivery: MappedDelivery) -> bool:
-    code = str(delivery.adr_tunnel_code or "").strip().upper()
-    return code not in {"", "-", "NONE", "NAN"}
-
-
 def resolve_delivery_mappings(
     routing_table: pd.DataFrame,
     context: GraphContext,
@@ -343,19 +574,22 @@ def resolve_delivery_mappings(
                 reason=f"mapping_infeasible: {delivery.mapping_infeasible_reason}",
             )
 
-    for avoid_tunnels in (False, True):
+    hazard_classes = sorted(
+        {str(delivery.hazard_class).strip() for delivery in deliveries}
+    )
+    for hazard_class in hazard_classes:
         group = [
             delivery
             for delivery in deliveries
             if delivery.mapping_feasible
-            and delivery_requires_tunnel_avoidance(delivery) == avoid_tunnels
+            and str(delivery.hazard_class).strip() == hazard_class
         ]
         if not group:
             continue
         legal_edges = collapse_parallel_edges(
             routing_table,
             "distance_weight",
-            avoid_tunnels,
+            hazard_class,
         )
         legal_graph = build_sparse_graph(context, legal_edges, "distance_weight")
         distance_cache: Dict[int, np.ndarray] = {}
@@ -429,6 +663,10 @@ def empty_candidate(
 ) -> PathCandidate:
     return PathCandidate(
         delivery_id=delivery.delivery_id,
+        destination_name=delivery.destination_name,
+        demand_kg=delivery.demand_kg,
+        hazard_class=delivery.hazard_class,
+        hazard_class_factor=hazard_class_factor(delivery.hazard_class),
         label=label,
         mapping_status=mapping.status,
         mapping_feasible=mapping_feasible,
@@ -497,6 +735,10 @@ def make_path_candidate(
         reason = ""
     return PathCandidate(
         delivery_id=delivery.delivery_id,
+        destination_name=delivery.destination_name,
+        demand_kg=delivery.demand_kg,
+        hazard_class=delivery.hazard_class,
+        hazard_class_factor=hazard_class_factor(delivery.hazard_class),
         label=label,
         mapping_status="mapped",
         mapping_feasible=True,
@@ -532,82 +774,109 @@ def generate_metric_candidates(
     vehicles: List[MappedVehicle],
     label: str,
     metric_column: str,
+    delivery_routing_tables: Optional[Dict[str, pd.DataFrame]] = None,
+    weighted_scales: Optional[Tuple[float, float]] = None,
+    risk_weight: float = RISK_WEIGHT,
+    cost_weight: float = COST_WEIGHT,
 ) -> List[PathCandidate]:
     generated: List[PathCandidate] = []
-    for avoid_tunnels in (False, True):
-        group = [
-            delivery
-            for delivery in deliveries
-            if delivery_requires_tunnel_avoidance(delivery) == avoid_tunnels
-        ]
-        if not group:
-            continue
-        collapsed = collapse_parallel_edges(routing_table, metric_column, avoid_tunnels)
-        graph = build_sparse_graph(context, collapsed, metric_column)
-        predecessor_cache: Dict[int, np.ndarray] = {}
-        for delivery in group:
-            mapping = mappings[delivery.delivery_id]
-            if not mapping.feasible:
-                mapping_feasible = mapping.status != "mapping_infeasible"
-                generated.append(
-                    empty_candidate(
-                        delivery,
-                        label,
-                        mapping,
-                        mapping.reason,
-                        mapping_feasible=mapping_feasible,
-                    )
-                )
-                continue
-            source_index = context.node_to_index.get(delivery.origin_node)
-            target_index = context.node_to_index.get(int(mapping.target_node))
-            if source_index is None or target_index is None:
-                generated.append(
-                    empty_candidate(
-                        delivery,
-                        label,
-                        mapping,
-                        "mapping_infeasible: mapped node is not in the routing graph",
-                        mapping_feasible=False,
-                    )
-                )
-                continue
-            if source_index not in predecessor_cache:
-                _, predecessor_cache[source_index] = dijkstra(
-                    csgraph=graph,
-                    directed=True,
-                    indices=source_index,
-                    return_predecessors=True,
-                )
-            predecessors = predecessor_cache[source_index]
-            node_path = reconstruct_node_path(
-                predecessors,
-                source_index,
-                target_index,
-                context.node_ids,
-            )
-            if not node_path:
-                generated.append(
-                    empty_candidate(
-                        delivery,
-                        label,
-                        mapping,
-                        "route_infeasible: no permitted path to the mapped destination",
-                        mapping_feasible=True,
-                    )
-                )
-                continue
-            path_edges = path_edges_from_nodes(collapsed, node_path)
+    tables = delivery_routing_tables or {}
+    for delivery in deliveries:
+        mapping = mappings[delivery.delivery_id]
+        if not mapping.feasible:
+            mapping_feasible = mapping.status != "mapping_infeasible"
             generated.append(
-                make_path_candidate(
+                empty_candidate(
                     delivery,
                     label,
                     mapping,
-                    node_path,
-                    path_edges,
-                    vehicles,
+                    mapping.reason,
+                    mapping_feasible=mapping_feasible,
                 )
             )
+            continue
+
+        base_table = tables.get(delivery.delivery_id, routing_table)
+        cropped_network = base_table is not routing_table
+        infeasible_prefix = "crop_infeasible" if cropped_network else "route_infeasible"
+        class_table = apply_hazard_class_risk(base_table, delivery.hazard_class)
+        if metric_column == "weighted_search_cost":
+            if weighted_scales is None:
+                raise ValueError("Weighted-search scales are required for weighted paths.")
+            class_table = add_weighted_search_cost(
+                class_table,
+                weighted_scales[0],
+                weighted_scales[1],
+                risk_weight,
+                cost_weight,
+            )
+        collapsed = collapse_parallel_edges(
+            class_table,
+            metric_column,
+            delivery.hazard_class,
+        )
+        if collapsed.empty:
+            generated.append(
+                empty_candidate(
+                    delivery,
+                    label,
+                    mapping,
+                    f"{infeasible_prefix}: network contains no permitted edges",
+                    mapping_feasible=True,
+                )
+            )
+            continue
+        local_context = (
+            context if base_table is routing_table else build_graph_context(collapsed)
+        )
+        source_index = local_context.node_to_index.get(delivery.origin_node)
+        target_index = local_context.node_to_index.get(int(mapping.target_node))
+        if source_index is None or target_index is None:
+            generated.append(
+                empty_candidate(
+                    delivery,
+                    label,
+                    mapping,
+                    f"{infeasible_prefix}: mapped node is outside the network",
+                    mapping_feasible=True,
+                )
+            )
+            continue
+        graph = build_sparse_graph(local_context, collapsed, metric_column)
+        _, predecessors = dijkstra(
+            csgraph=graph,
+            directed=True,
+            indices=source_index,
+            return_predecessors=True,
+        )
+        node_path = reconstruct_node_path(
+            predecessors,
+            source_index,
+            target_index,
+            local_context.node_ids,
+        )
+        if not node_path:
+            generated.append(
+                empty_candidate(
+                    delivery,
+                    label,
+                    mapping,
+                    f"{infeasible_prefix}: no permitted path to the mapped destination",
+                    mapping_feasible=True,
+                )
+            )
+            continue
+        path_edges = path_edges_from_nodes(collapsed, node_path)
+        generated.append(
+            make_path_candidate(
+                delivery,
+                label,
+                mapping,
+                node_path,
+                path_edges,
+                vehicles,
+            )
+        )
     return generated
 
 
@@ -660,7 +929,10 @@ def assign_candidates(
     deliveries: List[MappedDelivery],
     vehicles: List[MappedVehicle],
     energy_price: float,
+    risk_weight: float = RISK_WEIGHT,
+    cost_weight: float = COST_WEIGHT,
 ) -> Tuple[List[PathCandidate], List[PathCandidate], Tuple[str, ...], float, float]:
+    validate_objective_weights(risk_weight, cost_weight)
     risk_scale, cost_scale = assignment_scales(candidates, vehicles, energy_price)
     vehicle_lookup = {vehicle.vehicle_id: vehicle for vehicle in vehicles}
     candidate_indices: Dict[str, List[int]] = {}
@@ -685,11 +957,11 @@ def assign_candidates(
             for vehicle_id in candidate.feasible_vehicle_ids:
                 vehicle = vehicle_lookup[vehicle_id]
                 route_variable_cost = variable_cost(candidate, vehicle, energy_price)
-                activation_cost = 0.0 if vehicle_id in active_vehicles else vehicle.fixed_cost
-                incremental_cost = route_variable_cost + activation_cost
+                trip_fixed_cost = vehicle.fixed_cost
+                incremental_cost = route_variable_cost + trip_fixed_cost
                 score = (
-                    RISK_WEIGHT * candidate.path_risk / risk_scale
-                    + COST_WEIGHT * incremental_cost / cost_scale
+                    risk_weight * candidate.path_risk / risk_scale
+                    + cost_weight * incremental_cost / cost_scale
                 )
                 key = (
                     score,
@@ -704,7 +976,7 @@ def assign_candidates(
                         index,
                         vehicle_id,
                         route_variable_cost,
-                        activation_cost,
+                        trip_fixed_cost,
                         incremental_cost,
                         score,
                     )
@@ -743,21 +1015,38 @@ def assign_candidates(
     )
 
 
-def run_heuristic(adapter_result: AdapterResult) -> HeuristicResult:
+def run_heuristic(
+    adapter_result: AdapterResult,
+    network_mode: str = DEFAULT_NETWORK_MODE,
+    risk_weight: float = RISK_WEIGHT,
+    cost_weight: float = COST_WEIGHT,
+    startup_seconds: float = 0.0,
+    data_preparation_seconds: float = 0.0,
+) -> HeuristicResult:
+    validate_objective_weights(risk_weight, cost_weight)
+    if network_mode not in SUPPORTED_NETWORK_MODES:
+        raise ValueError(f"Unsupported network mode: {network_mode}")
     start = time.perf_counter()
     energy_price = adapter_result.energy_price_eur_per_kwh
-    destination_options = build_destination_options(
-        adapter_result.node_table,
-        adapter_result.deliveries,
-        adapter_result.max_mapping_distance_m,
-    )
+    network_start = time.perf_counter()
     edge_table = attach_oneway_information(
         adapter_result.edge_table,
         adapter_result.data_dir,
     )
     edge_table = prepare_metric_columns(edge_table)
     routing_table = build_routing_table(edge_table)
+    full_routing_edge_count = len(routing_table)
+    if network_mode == "solver_cropped":
+        routing_table = filter_largest_strong_component(routing_table)
     context = build_graph_context(routing_table)
+    initial_network_seconds = time.perf_counter() - network_start
+
+    mapping_start = time.perf_counter()
+    destination_options = build_destination_options(
+        adapter_result.node_table,
+        adapter_result.deliveries,
+        adapter_result.max_mapping_distance_m,
+    )
     mappings = resolve_delivery_mappings(
         routing_table,
         context,
@@ -765,7 +1054,21 @@ def run_heuristic(adapter_result: AdapterResult) -> HeuristicResult:
         destination_options,
         adapter_result.max_mapping_distance_m,
     )
+    mapping_seconds = time.perf_counter() - mapping_start
 
+    crop_start = time.perf_counter()
+    delivery_routing_tables = build_delivery_routing_tables(
+        routing_table,
+        adapter_result.node_table,
+        adapter_result.deliveries,
+        mappings,
+        network_mode,
+    )
+    network_preprocessing_seconds = (
+        initial_network_seconds + time.perf_counter() - crop_start
+    )
+
+    candidate_start = time.perf_counter()
     all_candidates: List[PathCandidate] = []
     preliminary_metric_specs = [
         ("distance", "distance_weight"),
@@ -781,43 +1084,81 @@ def run_heuristic(adapter_result: AdapterResult) -> HeuristicResult:
                 adapter_result.vehicles,
                 label,
                 metric_column,
+                delivery_routing_tables=delivery_routing_tables,
             )
         )
     weighted_risk_scale, weighted_length_scale = weighted_search_scales(all_candidates)
-    weighted_routing_table = add_weighted_search_cost(
-        routing_table,
-        weighted_risk_scale,
-        weighted_length_scale,
-    )
     all_candidates.extend(
         generate_metric_candidates(
-            weighted_routing_table,
+            routing_table,
             context,
             adapter_result.deliveries,
             mappings,
             adapter_result.vehicles,
             "weighted",
             "weighted_search_cost",
+            delivery_routing_tables=delivery_routing_tables,
+            weighted_scales=(weighted_risk_scale, weighted_length_scale),
+            risk_weight=risk_weight,
+            cost_weight=cost_weight,
         )
     )
+    candidate_generation_seconds = time.perf_counter() - candidate_start
 
+    assignment_start = time.perf_counter()
     all_candidates.sort(key=lambda candidate: (candidate.delivery_id, candidate.label))
     all_candidates, selected, active_vehicles, risk_scale, cost_scale = assign_candidates(
         all_candidates,
         adapter_result.deliveries,
         adapter_result.vehicles,
         energy_price,
+        risk_weight=risk_weight,
+        cost_weight=cost_weight,
     )
     feasible_selected = [candidate for candidate in selected if candidate.feasible]
     vehicle_lookup = {vehicle.vehicle_id: vehicle for vehicle in adapter_result.vehicles}
     total_variable_cost = sum(
         candidate.variable_cost or 0.0 for candidate in feasible_selected
     )
-    total_fixed_cost = sum(vehicle_lookup[vehicle_id].fixed_cost for vehicle_id in active_vehicles)
+    total_fixed_cost = sum(
+        candidate.activation_cost or 0.0 for candidate in feasible_selected
+    )
+    vehicle_assignment_seconds = time.perf_counter() - assignment_start
+    result_metadata = dict(adapter_result.risk_metadata)
+    result_metadata.update(
+        {
+            "hazard_class_factors": dict(HAZARD_CLASS_FACTORS),
+            "tunnel_permission_source": "solver A/B/C/D matrix",
+            "full_routing_edge_count": full_routing_edge_count,
+            "largest_scc_edge_count": len(routing_table),
+            "cropped_edge_counts": {
+                delivery_id: len(table)
+                for delivery_id, table in delivery_routing_tables.items()
+            },
+            "solver_crop_buffer": (
+                SOLVER_CROP_BUFFER if network_mode == "solver_cropped" else None
+            ),
+        }
+    )
+    runtime_seconds = time.perf_counter() - start
     return HeuristicResult(
         candidates=all_candidates,
         selected=selected,
-        runtime_seconds=time.perf_counter() - start,
+        region=adapter_result.region,
+        network_mode=network_mode,
+        risk_weight=risk_weight,
+        cost_weight=cost_weight,
+        startup_seconds=startup_seconds,
+        data_preparation_seconds=data_preparation_seconds,
+        network_preprocessing_seconds=network_preprocessing_seconds,
+        mapping_seconds=mapping_seconds,
+        candidate_generation_seconds=candidate_generation_seconds,
+        vehicle_assignment_seconds=vehicle_assignment_seconds,
+        export_seconds=0.0,
+        end_to_end_runtime_seconds=(
+            startup_seconds + data_preparation_seconds + runtime_seconds
+        ),
+        runtime_seconds=runtime_seconds,
         total_risk=sum(candidate.path_risk for candidate in feasible_selected),
         total_variable_cost=total_variable_cost,
         total_fixed_cost=total_fixed_cost,
@@ -832,7 +1173,8 @@ def run_heuristic(adapter_result: AdapterResult) -> HeuristicResult:
         weighted_path_risk_scale=weighted_risk_scale,
         weighted_path_length_scale=weighted_length_scale,
         max_mapping_distance_m=adapter_result.max_mapping_distance_m,
-        risk_metadata=dict(adapter_result.risk_metadata),
+        risk_metadata=result_metadata,
+        data_warnings=tuple(adapter_result.warnings),
     )
 
 
@@ -856,9 +1198,106 @@ def format_candidate(candidate: PathCandidate) -> str:
     )
 
 
+def compact_route(node_path: Tuple[int, ...], visible_nodes: int = 6) -> str:
+    if not node_path:
+        return "-"
+    if len(node_path) <= visible_nodes * 2:
+        return " -> ".join(str(node) for node in node_path)
+    start = " -> ".join(str(node) for node in node_path[:visible_nodes])
+    end = " -> ".join(str(node) for node in node_path[-visible_nodes:])
+    return f"{start} -> ... -> {end}"
+
+
+def solver_style_report(result: HeuristicResult) -> str:
+    lines = ["HEURISTIK-ERGEBNIS", "=" * 85]
+    for candidate in result.selected:
+        status = "Feasible" if candidate.feasible else "Infeasible"
+        lines.extend(
+            [
+                "",
+                (
+                    f"LIEFERUNG {candidate.delivery_id} | "
+                    f"Gefahrgutklasse: {candidate.hazard_class} | "
+                    f"Gewicht: {candidate.demand_kg:.0f} kg"
+                ),
+                "-" * 85,
+                f"Status:               {status}",
+                f"Ziel:                 {candidate.destination_name}",
+                f"Fahrzeug:             {candidate.vehicle_id or '-'}",
+                f"Kandidat:             {candidate.label}",
+                f"Route ({candidate.edge_count} Kanten): {compact_route(candidate.node_path)}",
+                f"Gesamtdistanz:        {candidate.path_length_km:.2f} km",
+                f"Variable Kosten:      {(candidate.variable_cost or 0.0):.2f} EUR",
+                f"Fixkosten je Fahrt:   {(candidate.activation_cost or 0.0):.2f} EUR",
+                f"Kumuliertes Risiko:   {candidate.path_risk:.6f}",
+            ]
+        )
+        if candidate.infeasible_reason:
+            lines.append(f"Grund:                {candidate.infeasible_reason}")
+
+    lines.extend(
+        [
+            "",
+            "GESAMTSYSTEM",
+            "=" * 85,
+            f"Region:                 {result.region}",
+            f"Netzwerkmodus:          {result.network_mode}",
+            f"Strompreis:             {result.energy_price_eur_per_kwh:.2f} EUR/kWh ({result.energy_price_scenario})",
+            f"Zulaessige Lieferungen: {result.feasible_deliveries}/{len(result.selected)}",
+            f"Eingesetzte Fahrzeugtypen: {len(result.active_vehicles)}",
+            f"Namen:                  {', '.join(result.active_vehicles) or '-'}",
+            f"Gesamte Fixkosten:       {result.total_fixed_cost:.2f} EUR",
+            f"Gesamte var. Kosten:     {result.total_variable_cost:.2f} EUR",
+            f"TOTALE KOSTEN:           {result.total_cost:.2f} EUR",
+            f"TOTALES RISIKO:          {result.total_risk:.6f}",
+            "=" * 85,
+            "",
+            "ZUSAMMENFASSUNG: ZUWEISUNG UND KOSTEN",
+            "-" * 85,
+            f"| {'Lieferung':<12} | {'Fahrzeug':<25} | {'Fixkosten':<10} | {'Var. Kosten':<11} | {'Risiko':<10} |",
+            "-" * 85,
+        ]
+    )
+    for candidate in result.selected:
+        lines.append(
+            f"| {candidate.delivery_id:<12} | {(candidate.vehicle_id or '-'):<25} | "
+            f"{(candidate.activation_cost or 0.0):>6.2f} EUR | "
+            f"{(candidate.variable_cost or 0.0):>7.2f} EUR | "
+            f"{candidate.path_risk:>10.6f} |"
+        )
+    lines.extend(
+        [
+            "-" * 85,
+            "",
+            "LAUFZEIT-ZUSAMMENFASSUNG",
+            "=" * 60,
+            f"Python-Start/Imports: {result.startup_seconds:.3f}s",
+            f"Datenvorbereitung:    {result.data_preparation_seconds:.3f}s",
+            f"Netzwerkvorbereitung: {result.network_preprocessing_seconds:.3f}s",
+            f"Mapping:              {result.mapping_seconds:.3f}s",
+            f"Pfadgenerierung:      {result.candidate_generation_seconds:.3f}s",
+            f"Fahrzeugzuweisung:    {result.vehicle_assignment_seconds:.3f}s",
+            f"Ergebnisverarbeitung: {result.export_seconds:.3f}s",
+            "-" * 30,
+            f"Heuristik-Kernlaufzeit: {(result.candidate_generation_seconds + result.vehicle_assignment_seconds):.3f}s",
+            f"Heuristiklaufzeit:      {result.runtime_seconds:.3f}s",
+            f"Heuristik-Gesamtlaufzeit:{result.end_to_end_runtime_seconds:.3f}s",
+            "=" * 60,
+        ]
+    )
+    if result.data_warnings:
+        lines.extend(["", "WARNUNGEN:"])
+        lines.extend(f"- {warning}" for warning in result.data_warnings)
+    return "\n".join(lines)
+
+
 def candidate_to_row(candidate: PathCandidate, selected: bool) -> Dict[str, object]:
     return {
         "delivery_id": candidate.delivery_id,
+        "destination_name": candidate.destination_name,
+        "demand_kg": candidate.demand_kg,
+        "hazard_class": candidate.hazard_class,
+        "hazard_class_factor": candidate.hazard_class_factor,
         "candidate_label": candidate.label,
         "selected": selected,
         "mapping_status": candidate.mapping_status,
@@ -937,8 +1376,16 @@ def summary_dict(result: HeuristicResult) -> Dict[str, object]:
         for candidate in result.selected
         if candidate.infeasible_reason.startswith("route_infeasible")
     ]
+    crop_infeasible = [
+        candidate.delivery_id
+        for candidate in result.selected
+        if candidate.infeasible_reason.startswith("crop_infeasible")
+    ]
     metadata = {
         **result.risk_metadata,
+        "network_mode": result.network_mode,
+        "risk_weight": result.risk_weight,
+        "cost_weight": result.cost_weight,
         "max_mapping_distance_m": result.max_mapping_distance_m,
         "fixed_path_risk_scale": result.fixed_path_risk_scale,
         "fixed_cost_scale": result.fixed_cost_scale,
@@ -946,6 +1393,27 @@ def summary_dict(result: HeuristicResult) -> Dict[str, object]:
         "weighted_path_length_scale": result.weighted_path_length_scale,
     }
     return {
+        "region": result.region,
+        "network_mode": result.network_mode,
+        "risk_weight": result.risk_weight,
+        "cost_weight": result.cost_weight,
+        "startup_seconds": round(result.startup_seconds, 6),
+        "data_preparation_seconds": round(result.data_preparation_seconds, 6),
+        "network_preprocessing_seconds": round(
+            result.network_preprocessing_seconds,
+            6,
+        ),
+        "mapping_seconds": round(result.mapping_seconds, 6),
+        "candidate_generation_seconds": round(
+            result.candidate_generation_seconds,
+            6,
+        ),
+        "vehicle_assignment_seconds": round(
+            result.vehicle_assignment_seconds,
+            6,
+        ),
+        "export_seconds": round(result.export_seconds, 6),
+        "end_to_end_runtime_seconds": round(result.end_to_end_runtime_seconds, 6),
         "runtime_seconds": round(result.runtime_seconds, 6),
         "energy_price_scenario": result.energy_price_scenario,
         "energy_price_eur_per_kwh": result.energy_price_eur_per_kwh,
@@ -955,6 +1423,7 @@ def summary_dict(result: HeuristicResult) -> Dict[str, object]:
         "infeasible_deliveries": result.infeasible_deliveries,
         "mapping_infeasible_deliveries": mapping_infeasible,
         "route_infeasible_deliveries": route_infeasible,
+        "crop_infeasible_deliveries": crop_infeasible,
         "total_risk": round(result.total_risk, 6),
         "total_variable_cost": round(result.total_variable_cost, 6),
         "total_fixed_cost": round(result.total_fixed_cost, 6),
@@ -971,38 +1440,67 @@ def summary_dict(result: HeuristicResult) -> Dict[str, object]:
             selected["reverse_edges_used"].sum() if not selected.empty else 0
         ),
         "metadata": metadata,
+        "warnings": list(result.data_warnings),
         "notes": [
             "Deliveries are independent one-way OD tasks; no return trip is modelled.",
             "Payload capacity is released after each delivery; execution order is not scheduled.",
-            "Risk and cost are reported separately for solver comparison.",
-            "Tunnel filtering is conservative for ADR-restricted deliveries.",
+            "Risk and cost are reported separately for comparison preparation.",
+            "Solver-style output does not imply identical objective definitions.",
+            "Tunnel legality follows the solver A/B/C/D hazard-class matrix.",
+            "Solver-cropped mode keeps original arc IDs instead of contracting degree chains.",
             "Range is checked without inserting charging stops in this baseline.",
+            "Fixed vehicle cost is charged per delivery/trip to match the current solver snapshot.",
         ],
     }
 
 
-def export_results(result: HeuristicResult, output_dir: Path) -> None:
+def write_summary_outputs(result: HeuristicResult, output_dir: Path) -> None:
+    with (output_dir / "heuristic_summary.json").open("w", encoding="utf-8") as file:
+        json.dump(summary_dict(result), file, indent=2, ensure_ascii=False)
+    with (output_dir / "heuristic_report.txt").open("w", encoding="utf-8") as file:
+        file.write(solver_style_report(result))
+
+
+def export_results(result: HeuristicResult, output_dir: Path) -> HeuristicResult:
+    export_start = time.perf_counter()
     output_dir.mkdir(parents=True, exist_ok=True)
     candidates_dataframe(result).to_csv(output_dir / "heuristic_candidates.csv", index=False)
     selected_dataframe(result).to_csv(
         output_dir / "heuristic_selected_paths.csv",
         index=False,
     )
-    with (output_dir / "heuristic_summary.json").open("w", encoding="utf-8") as file:
-        json.dump(summary_dict(result), file, indent=2, ensure_ascii=False)
+    write_summary_outputs(result, output_dir)
+    export_seconds = time.perf_counter() - export_start
+    updated = replace(
+        result,
+        export_seconds=export_seconds,
+        end_to_end_runtime_seconds=(
+            result.startup_seconds
+            + result.data_preparation_seconds
+            + result.runtime_seconds
+            + export_seconds
+        ),
+    )
+    write_summary_outputs(updated, output_dir)
+    return updated
 
 
 def summarize(result: HeuristicResult) -> str:
     summary = summary_dict(result)
     lines = [
+        solver_style_report(result),
+        "",
         "Real-data path heuristic summary",
         "-" * 36,
-        f"runtime_seconds={result.runtime_seconds:.2f}",
+        f"region={result.region}",
+        f"algorithm_runtime_seconds={result.runtime_seconds:.2f}",
+        f"end_to_end_runtime_seconds={result.end_to_end_runtime_seconds:.2f}",
         f"candidate_count={len(result.candidates)}",
         f"feasible_deliveries={result.feasible_deliveries}",
         f"infeasible_deliveries={result.infeasible_deliveries}",
         f"mapping_infeasible_deliveries={summary['mapping_infeasible_deliveries']}",
         f"route_infeasible_deliveries={summary['route_infeasible_deliveries']}",
+        f"crop_infeasible_deliveries={summary['crop_infeasible_deliveries']}",
         f"total_risk={result.total_risk:.4f}",
         f"total_variable_cost={result.total_variable_cost:.2f}",
         f"total_fixed_cost={result.total_fixed_cost:.2f}",
@@ -1030,7 +1528,31 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=None,
-        help="Optional directory for solver-comparable CSV/JSON output.",
+        help="Optional directory for solver-style CSV/JSON/text output.",
+    )
+    parser.add_argument(
+        "--region",
+        choices=SUPPORTED_REGIONS,
+        default=DEFAULT_REGION,
+        help="Road-network region to load (default: germany).",
+    )
+    parser.add_argument(
+        "--network-mode",
+        choices=SUPPORTED_NETWORK_MODES,
+        default=DEFAULT_NETWORK_MODE,
+        help="Use the full graph or the solver-style SCC and OD crop.",
+    )
+    parser.add_argument(
+        "--risk-weight",
+        type=float,
+        default=RISK_WEIGHT,
+        help="Risk share of the weighted objective (default: 0.65).",
+    )
+    parser.add_argument(
+        "--cost-weight",
+        type=float,
+        default=COST_WEIGHT,
+        help="Cost share of the weighted objective (default: 0.35).",
     )
     parser.add_argument(
         "--max-mapping-distance-m",
@@ -1038,18 +1560,37 @@ def parse_args() -> argparse.Namespace:
         default=1000.0,
         help="Maximum coordinate-to-network mapping distance for origins and destinations.",
     )
+    parser.add_argument(
+        "--energy-price-eur-per-kwh",
+        type=float,
+        default=None,
+        help="Optional manual energy price override, e.g. 0.35 for Berlin solver comparison.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    validate_objective_weights(args.risk_weight, args.cost_weight)
+    adapter_start = time.perf_counter()
+    startup_seconds = adapter_start - MODULE_START_SECONDS
     adapter_result = build_adapter_result(
         args.data_dir,
         max_mapping_distance_m=args.max_mapping_distance_m,
+        region=args.region,
+        energy_price_eur_per_kwh=args.energy_price_eur_per_kwh,
     )
-    result = run_heuristic(adapter_result)
+    data_preparation_seconds = time.perf_counter() - adapter_start
+    result = run_heuristic(
+        adapter_result,
+        network_mode=args.network_mode,
+        risk_weight=args.risk_weight,
+        cost_weight=args.cost_weight,
+        startup_seconds=startup_seconds,
+        data_preparation_seconds=data_preparation_seconds,
+    )
     if args.output_dir is not None:
-        export_results(result, args.output_dir)
+        result = export_results(result, args.output_dir)
     text = summarize(result)
     if args.output_dir is not None:
         text += f"\n\nExported results to: {args.output_dir}"

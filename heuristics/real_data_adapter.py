@@ -6,7 +6,7 @@ and normalize the project data into objects that the real heuristic can use:
 
 - mapped deliveries;
 - electric-truck data;
-- Germany-wide graph nodes and edges;
+- Germany-wide or Berlin graph nodes and edges;
 - first edge-level risk scores;
 - mapped high-power charging stations;
 - clear notes about still-missing permission data.
@@ -36,12 +36,51 @@ except ModuleNotFoundError as exc:  # pragma: no cover - user environment guard
 
 EARTH_RADIUS_M = 6_371_000.0
 KASSEL_CITY_CENTER = (51.3127, 9.4797)
+BERLIN_CITY_CENTER = (52.5200, 13.4050)
 LITER_TO_KG_ASSUMPTION = 1.0
 MIN_CHARGING_POWER_KW = 150.0
 DEFAULT_ENERGY_PRICE_SCENARIO = "highway_hpc"
+DEFAULT_REGION = "germany"
+SUPPORTED_REGIONS = ("germany", "berlin")
 
-RISK_POPULATION_WEIGHT = 0.45
-RISK_ACCIDENT_WEIGHT = 0.35
+BERLIN_COMPARISON_DELIVERIES = (
+    {
+        "customer_id": 1,
+        "origin": "Berlin Mitte",
+        "destination_name": "Berlin Kreuzberg",
+        "destination_latitude": 52.4986,
+        "destination_longitude": 13.4030,
+        "un_number": "UN 1203",
+        "danger_class": "3",
+        "quantity": 10_000.0,
+        "unit": "kg",
+    },
+    {
+        "customer_id": 2,
+        "origin": "Berlin Mitte",
+        "destination_name": "Berlin Charlottenburg",
+        "destination_latitude": 52.5163,
+        "destination_longitude": 13.3041,
+        "un_number": "UN 1011",
+        "danger_class": "2",
+        "quantity": 8_000.0,
+        "unit": "kg",
+    },
+    {
+        "customer_id": 3,
+        "origin": "Berlin Mitte",
+        "destination_name": "Berlin Pankow",
+        "destination_latitude": 52.5695,
+        "destination_longitude": 13.4010,
+        "un_number": "UN 1052",
+        "danger_class": "8",
+        "quantity": 5_000.0,
+        "unit": "kg",
+    },
+)
+
+RISK_POPULATION_WEIGHT = 0.40
+RISK_ACCIDENT_WEIGHT = 0.40
 RISK_NATURE_WEIGHT = 0.20
 
 
@@ -81,6 +120,8 @@ class MappedDelivery:
 @dataclass(frozen=True)
 class AdapterResult:
     data_dir: Path
+    region: str
+    origin_name: str
     origin_node: int
     origin_distance_m: float
     origin_mapping_feasible: bool
@@ -98,12 +139,34 @@ class AdapterResult:
     warnings: List[str]
 
 
-def validate_data_dir(data_dir: Path) -> Path:
-    resolved = data_dir.expanduser().resolve()
-    required = [
+def normalize_region(region: str) -> str:
+    normalized = str(region).strip().lower()
+    if normalized not in SUPPORTED_REGIONS:
+        raise ValueError(
+            f"Unsupported region: {region}. Choose one of {SUPPORTED_REGIONS}."
+        )
+    return normalized
+
+
+def required_files_for_region(region: str) -> List[str]:
+    normalized = normalize_region(region)
+    if normalized == "berlin":
+        return [
+            "all_data.pkl",
+            "berlin_graph_with_population_new.pkl",
+            "berlin_graph_with_nature_new.pkl",
+            "berlin_graph_with_accidents_new.pkl",
+            "berlin_graph_geo_com.pkl",
+        ]
+    return [
         "all_data.pkl",
         "germany_graph_with_population.pkl",
     ]
+
+
+def validate_data_dir(data_dir: Path, region: str = DEFAULT_REGION) -> Path:
+    resolved = data_dir.expanduser().resolve()
+    required = required_files_for_region(region)
     missing = [name for name in required if not (resolved / name).exists()]
     if missing:
         raise FileNotFoundError(
@@ -206,16 +269,58 @@ def robust_normalized(series: pd.Series) -> pd.Series:
     return values.clip(upper=upper) / upper
 
 
-def max_normalized(series: pd.Series) -> Tuple[pd.Series, float]:
+def minmax_normalized(
+    series: pd.Series,
+    *,
+    inverse: bool = False,
+) -> Tuple[pd.Series, float, float]:
     values = pd.to_numeric(series, errors="coerce").fillna(0.0).clip(lower=0.0)
+    minimum = float(values.min()) if not values.empty else 0.0
     maximum = float(values.max()) if not values.empty else 0.0
-    if not np.isfinite(maximum) or maximum <= 0:
-        return pd.Series(0.0, index=series.index), 0.0
-    return values / maximum, maximum
+    if not np.isfinite(minimum) or not np.isfinite(maximum):
+        return pd.Series(0.0, index=series.index), 0.0, 0.0
+    value_range = maximum - minimum
+    if value_range > 0:
+        normalized = (values - minimum) / value_range
+    else:
+        normalized = pd.Series(0.0, index=series.index)
+    if inverse:
+        normalized = 1.0 - normalized
+    return normalized, minimum, maximum
+
+
+def risk_component_activity(
+    region: str,
+    component_maxima: Dict[str, float],
+    warnings: List[str],
+) -> Dict[str, bool]:
+    activity: Dict[str, bool] = {}
+    for component, maximum in component_maxima.items():
+        active = bool(np.isfinite(maximum) and maximum > 0)
+        activity[f"{component}_component_active"] = active
+        if not active:
+            warnings.append(
+                f"{normalize_region(region).title()} {component} edge-risk source has "
+                "maximum 0; this component contributes 0 and risk weights remain "
+                "unchanged."
+            )
+    return activity
 
 
 def existing_columns(table: pd.DataFrame, candidates: List[str]) -> List[str]:
     return [column for column in candidates if column in table.columns]
+
+
+def ensure_arc_id(table: pd.DataFrame) -> pd.DataFrame:
+    if "arc_id" in table.columns:
+        return table
+    result = table.reset_index(drop=True).copy()
+    result.insert(0, "arc_id", np.arange(len(result), dtype=np.int64))
+    return result
+
+
+def berlin_delivery_table() -> pd.DataFrame:
+    return pd.DataFrame(BERLIN_COMPARISON_DELIVERIES)
 
 
 def map_vehicles(vehicles_table: pd.DataFrame) -> List[MappedVehicle]:
@@ -238,7 +343,12 @@ def map_vehicles(vehicles_table: pd.DataFrame) -> List[MappedVehicle]:
 def select_energy_price(
     energy_prices: pd.DataFrame,
     scenario: str = DEFAULT_ENERGY_PRICE_SCENARIO,
+    override_eur_per_kwh: Optional[float] = None,
 ) -> float:
+    if override_eur_per_kwh is not None:
+        if override_eur_per_kwh <= 0:
+            raise ValueError("energy_price_eur_per_kwh must be positive.")
+        return float(override_eur_per_kwh)
     match = energy_prices[energy_prices["scenario"] == scenario]
     if match.empty:
         raise ValueError(f"Energy-price scenario is not available: {scenario}")
@@ -318,6 +428,7 @@ def merge_edge_feature(
     feature_table: pd.DataFrame,
     feature_columns: List[str],
 ) -> pd.DataFrame:
+    feature_table = ensure_arc_id(feature_table)
     keys = ["arc_id", "u", "v"] if "arc_id" in feature_table.columns else ["u", "v"]
     available_columns = keys + existing_columns(feature_table, feature_columns)
     if len(available_columns) == len(keys):
@@ -504,12 +615,35 @@ def extract_tunnel_values(
     return pd.Series(values, name="tunnel").fillna("unknown")
 
 
+def extract_berlin_tunnel_values(
+    data_dir: Path,
+    edge_count: int,
+    warnings: List[str],
+) -> Optional[pd.Series]:
+    graph = load_optional_pickle(data_dir / "berlin_graph_geo_com.pkl", warnings)
+    if graph is None or "tunnel" not in graph:
+        warnings.append("Berlin graph has no tunnel dictionary.")
+        return None
+    tunnel = graph["tunnel"]
+    values = pd.Series(tunnel, name="tunnel").reindex(range(edge_count))
+    if values.notna().sum() != edge_count:
+        warnings.append(
+            f"Berlin tunnel data covers {values.notna().sum():,} of {edge_count:,} edges."
+        )
+    return values.fillna("unknown")
+
+
 def attach_tunnel_information(
     edge_table: pd.DataFrame,
     data_dir: Path,
     warnings: List[str],
+    region: str = DEFAULT_REGION,
 ) -> pd.DataFrame:
-    tunnel_values = extract_tunnel_values(data_dir, len(edge_table), warnings)
+    normalized_region = normalize_region(region)
+    if normalized_region == "berlin":
+        tunnel_values = extract_berlin_tunnel_values(data_dir, len(edge_table), warnings)
+    else:
+        tunnel_values = extract_tunnel_values(data_dir, len(edge_table), warnings)
     if tunnel_values is None:
         return edge_table
 
@@ -535,7 +669,10 @@ def attach_accident_rate(
     edge_table: pd.DataFrame,
     accident_edges: pd.DataFrame,
 ) -> Tuple[pd.DataFrame, str, str]:
-    if "acc_rate" in accident_edges.columns:
+    if "score" in accident_edges.columns:
+        source_field = "score"
+        transformation = "direct solver score (accidents / accident-edge length)"
+    elif "acc_rate" in accident_edges.columns:
         source_field = "acc_rate"
         transformation = "direct rate"
     elif "accidents" in accident_edges.columns:
@@ -544,9 +681,6 @@ def attach_accident_rate(
     elif "weighted_score" in accident_edges.columns:
         source_field = "weighted_score"
         transformation = "direct rate (verified weighted_accidents / length)"
-    elif "score" in accident_edges.columns:
-        source_field = "score"
-        transformation = "direct rate (verified accidents / length)"
     elif "accident_score" in accident_edges.columns:
         raise ValueError(
             "The accident graph only contains accident_score, whose rate/total "
@@ -577,10 +711,12 @@ def attach_accident_rate(
 
 def load_edge_table(
     data_dir: Path,
-    germany_population: Dict[str, pd.DataFrame],
+    population_graph: Dict[str, pd.DataFrame],
     warnings: List[str],
+    region: str = DEFAULT_REGION,
 ) -> Tuple[pd.DataFrame, bool, Dict[str, object]]:
-    population_edges = germany_population["edges"]
+    normalized_region = normalize_region(region)
+    population_edges = ensure_arc_id(population_graph["edges"])
     base_columns = existing_columns(
         population_edges,
         ["arc_id", "u", "v", "distance_m", "length_m", "population", "pop_per_meter"],
@@ -593,11 +729,16 @@ def load_edge_table(
         errors="coerce",
     ).fillna(0.0).clip(lower=0.0) / 1000.0
 
-    germany_nature = load_optional_pickle(data_dir / "germany_graph_with_nature.pkl", warnings)
-    if germany_nature is not None and "edges" in germany_nature:
+    nature_filename = (
+        "berlin_graph_with_nature_new.pkl"
+        if normalized_region == "berlin"
+        else "germany_graph_with_nature.pkl"
+    )
+    nature_graph = load_optional_pickle(data_dir / nature_filename, warnings)
+    if nature_graph is not None and "edges" in nature_graph:
         edge_table = merge_edge_feature(
             edge_table,
-            germany_nature["edges"],
+            nature_graph["edges"],
             [
                 "highway",
                 "name",
@@ -608,16 +749,15 @@ def load_edge_table(
                 "nature_score",
             ],
         )
-    else:
-        edge_table["nature_score"] = 0.0
-        warnings.append("Nature edge scores are not available; nature risk is set to 0.")
 
-    germany_accidents = load_optional_pickle(
-        data_dir / "germany_graph_with_accidents.pkl",
-        warnings,
+    accident_filename = (
+        "berlin_graph_with_accidents_new.pkl"
+        if normalized_region == "berlin"
+        else "germany_graph_with_accidents.pkl"
     )
-    if germany_accidents is not None and "edges" in germany_accidents:
-        accident_edges = germany_accidents["edges"]
+    accident_graph = load_optional_pickle(data_dir / accident_filename, warnings)
+    if accident_graph is not None and "edges" in accident_graph:
+        accident_edges = accident_graph["edges"]
         edge_table, accident_source_field, accident_transformation = attach_accident_rate(
             edge_table,
             accident_edges,
@@ -628,43 +768,91 @@ def load_edge_table(
         accident_transformation = "missing accident data; rate set to 0"
         warnings.append("Accident risk is set to 0 because the accident graph is unavailable.")
 
-    if "nature_score" not in edge_table.columns:
-        edge_table["nature_score"] = 0.0
-
     population_rate = pd.to_numeric(
         edge_table["pop_per_meter"], errors="coerce"
     ).fillna(0.0).clip(lower=0.0)
-    nature_rate = pd.to_numeric(
-        edge_table["nature_score"], errors="coerce"
-    ).fillna(0.0).clip(lower=0.0)
-    edge_table["population_rate_norm"], population_rate_max = max_normalized(
-        population_rate
-    )
-    edge_table["accident_rate_norm"], accident_rate_max = max_normalized(
-        edge_table["accident_rate"]
-    )
-    edge_table["nature_rate_norm"], nature_rate_max = max_normalized(nature_rate)
-    edge_table["risk_rate_per_km"] = (
+    (
+        edge_table["population_rate_norm"],
+        population_rate_min,
+        population_rate_max,
+    ) = minmax_normalized(population_rate)
+    (
+        edge_table["accident_rate_norm"],
+        accident_rate_min,
+        accident_rate_max,
+    ) = minmax_normalized(edge_table["accident_rate"])
+    if "dist_to_nature_m" in edge_table.columns:
+        nature_distance = pd.to_numeric(
+            edge_table["dist_to_nature_m"], errors="coerce"
+        ).fillna(0.0).clip(lower=0.0)
+        (
+            edge_table["nature_rate_norm"],
+            nature_rate_min,
+            nature_rate_max,
+        ) = minmax_normalized(nature_distance, inverse=True)
+        nature_source_field = "dist_to_nature_m"
+        nature_transformation = "1 - minmax(dist_to_nature_m)"
+    else:
+        edge_table["nature_rate_norm"] = 0.0
+        nature_rate_min = 0.0
+        nature_rate_max = 0.0
+        nature_source_field = "none"
+        nature_transformation = "missing nature distance; risk set to 0"
+        warnings.append(
+            "Nature distance is unavailable; nature risk is set to 0."
+        )
+    edge_table["base_risk_score"] = (
         RISK_POPULATION_WEIGHT * edge_table["population_rate_norm"]
         + RISK_ACCIDENT_WEIGHT * edge_table["accident_rate_norm"]
         + RISK_NATURE_WEIGHT * edge_table["nature_rate_norm"]
     )
-    edge_table["risk_score"] = edge_table["risk_rate_per_km"] * edge_table["length_km"]
+    edge_table["risk_rate_per_km"] = edge_table["base_risk_score"]
+    edge_table["risk_score"] = edge_table["base_risk_score"]
+    component_activity = risk_component_activity(
+        normalized_region,
+        {
+            "population": population_rate_max,
+            "accident": accident_rate_max,
+            "nature": nature_rate_max,
+        },
+        warnings,
+    )
     risk_metadata: Dict[str, object] = {
         "accident_source_field": accident_source_field,
         "accident_transformation": accident_transformation,
+        "nature_source_field": nature_source_field,
+        "nature_transformation": nature_transformation,
+        "population_rate_min": population_rate_min,
         "population_rate_max": population_rate_max,
+        "accident_rate_min": accident_rate_min,
         "accident_rate_max": accident_rate_max,
+        "nature_rate_min": nature_rate_min,
         "nature_rate_max": nature_rate_max,
+        "risk_component_weights": {
+            "population": RISK_POPULATION_WEIGHT,
+            "accident": RISK_ACCIDENT_WEIGHT,
+            "nature": RISK_NATURE_WEIGHT,
+        },
+        "risk_length_factor": "not applied; aligned with current solver edge score",
+        "risk_normalization_scope": "full loaded regional edge data before network crop",
+        **component_activity,
     }
 
-    edge_table = attach_tunnel_information(edge_table, data_dir, warnings)
+    edge_table = attach_tunnel_information(
+        edge_table,
+        data_dir,
+        warnings,
+        region=normalized_region,
+    )
+    if normalized_region == "berlin":
+        # Berlin graph rows already represent directed arcs.
+        edge_table["oneway"] = "yes"
     edge_permission_ready = "tunnel" in edge_table.columns
     if not edge_permission_ready:
         warnings.append(
-            "Germany edge table has no tunnel column in the default loaded files. "
+            f"{normalized_region.title()} edge table has no tunnel column. "
             "ADR tunnel-code filtering is prepared at delivery level, but edge-level "
-            "forbidden-edge filtering still needs the tunnel-enabled Germany graph."
+            "forbidden-edge filtering still needs tunnel data."
         )
 
     return edge_table, edge_permission_ready, risk_metadata
@@ -756,27 +944,59 @@ def capacity_feasibility_preview(
 def build_adapter_result(
     data_dir: Path,
     max_mapping_distance_m: float = 1000.0,
+    region: str = DEFAULT_REGION,
+    energy_price_eur_per_kwh: Optional[float] = None,
+    energy_price_scenario: str = DEFAULT_ENERGY_PRICE_SCENARIO,
 ) -> AdapterResult:
     if max_mapping_distance_m <= 0:
         raise ValueError("max_mapping_distance_m must be positive.")
-    resolved_data_dir = validate_data_dir(data_dir)
+    normalized_region = normalize_region(region)
+    resolved_data_dir = validate_data_dir(data_dir, normalized_region)
     warnings: List[str] = []
     all_data = load_pickle(resolved_data_dir / "all_data.pkl")
-    germany_population = load_pickle(resolved_data_dir / "germany_graph_with_population.pkl")
+    population_filename = (
+        "berlin_graph_with_population_new.pkl"
+        if normalized_region == "berlin"
+        else "germany_graph_with_population.pkl"
+    )
+    population_graph = load_pickle(resolved_data_dir / population_filename)
 
-    tree, nodes = build_node_lookup(germany_population["nodes"])
+    if normalized_region == "berlin":
+        accident_graph = load_pickle(
+            resolved_data_dir / "berlin_graph_with_accidents_new.pkl"
+        )
+        node_source = accident_graph["nodes"]
+        origin_name = "Berlin Mitte"
+        origin_coordinates = BERLIN_CITY_CENTER
+        delivery_table = berlin_delivery_table()
+    else:
+        node_source = population_graph["nodes"]
+        origin_name = "Kassel"
+        origin_coordinates = KASSEL_CITY_CENTER
+        delivery_table = all_data["delivery_routes"]
+
+    tree, nodes = build_node_lookup(node_source)
     origin_node, _, _, origin_distance = nearest_node(
         tree,
         nodes,
-        KASSEL_CITY_CENTER[0],
-        KASSEL_CITY_CENTER[1],
+        origin_coordinates[0],
+        origin_coordinates[1],
     )
 
     vehicles = map_vehicles(all_data["vehicles"])
-    energy_price = select_energy_price(all_data["energy_prices"])
+    energy_price = select_energy_price(
+        all_data["energy_prices"],
+        scenario=energy_price_scenario,
+        override_eur_per_kwh=energy_price_eur_per_kwh,
+    )
+    effective_energy_price_scenario = (
+        energy_price_scenario
+        if energy_price_eur_per_kwh is None
+        else "manual_override"
+    )
     adr_lookup = build_adr_lookup(all_data["ADR_dataset"])
     deliveries = map_deliveries(
-        all_data["delivery_routes"],
+        delivery_table,
         adr_lookup,
         tree,
         nodes,
@@ -786,24 +1006,46 @@ def build_adapter_result(
     )
     edge_table, edge_permission_ready, risk_metadata = load_edge_table(
         resolved_data_dir,
-        germany_population,
+        population_graph,
         warnings,
+        region=normalized_region,
     )
     charging_stations = map_charging_stations(
         all_data["charging_infrastructure"],
         tree,
         nodes,
     )
+    if normalized_region == "berlin" and not charging_stations.empty:
+        charging_stations = charging_stations.loc[
+            charging_stations["distance_m"] <= max_mapping_distance_m
+        ].reset_index(drop=True)
 
     notes = [
-        "Kassel origin uses a temporary city-center coordinate.",
         "Liter quantities use a first-version 1 liter = 1 kg conversion.",
-        "Germany population graph nodes are used for nearest-node mapping because deliveries are Germany-wide.",
-        "Edge risk score currently combines population and nature data; accident data is added only if the graph is readable in the local environment.",
+        "Edge risk combines population, accident, and nature rates with fixed weights.",
+        f"Energy price is {energy_price:.2f} EUR/kWh ({effective_energy_price_scenario}).",
         f"Charging stations are filtered to >= {MIN_CHARGING_POWER_KW:.0f} kW and mapped to nearest graph nodes for later EV routing.",
     ]
+    if normalized_region == "berlin":
+        notes.extend(
+            [
+                "Berlin accident-graph nodes provide latitude and longitude for mapping.",
+                "Berlin coordinates, demand, and hazard classes reproduce the current Berlin solver snapshot; the two implementations do not yet share one input file.",
+                "Representative UN numbers are added on the heuristic side for ADR tunnel checks.",
+                "Berlin graph rows are already directed arcs and are not mirrored by the heuristic.",
+            ]
+        )
+    else:
+        notes.extend(
+            [
+                "Kassel origin uses a temporary city-center coordinate.",
+                "Germany population-graph nodes are used for nearest-node mapping.",
+            ]
+        )
     return AdapterResult(
         data_dir=resolved_data_dir,
+        region=normalized_region,
+        origin_name=origin_name,
         origin_node=origin_node,
         origin_distance_m=round(origin_distance, 2),
         origin_mapping_feasible=origin_distance <= max_mapping_distance_m,
@@ -814,7 +1056,7 @@ def build_adapter_result(
         edge_table=edge_table,
         charging_stations=charging_stations,
         edge_permission_ready=edge_permission_ready,
-        energy_price_scenario=DEFAULT_ENERGY_PRICE_SCENARIO,
+        energy_price_scenario=effective_energy_price_scenario,
         energy_price_eur_per_kwh=energy_price,
         risk_metadata=risk_metadata,
         notes=notes,
@@ -850,7 +1092,8 @@ def summarize(result: AdapterResult) -> str:
         "Real-data adapter summary",
         "-" * 30,
         f"data_dir={result.data_dir}",
-        f"origin=Kassel, origin_node={result.origin_node}, nearest_distance_m={result.origin_distance_m:.2f}",
+        f"region={result.region}",
+        f"origin={result.origin_name}, origin_node={result.origin_node}, nearest_distance_m={result.origin_distance_m:.2f}",
         f"origin_mapping_feasible={result.origin_mapping_feasible}",
         f"max_mapping_distance_m={result.max_mapping_distance_m:.2f}",
         f"energy_price_scenario={result.energy_price_scenario}",
@@ -922,10 +1165,22 @@ def parse_args() -> argparse.Namespace:
         help="Directory containing the agreed project data files.",
     )
     parser.add_argument(
+        "--region",
+        choices=SUPPORTED_REGIONS,
+        default=DEFAULT_REGION,
+        help="Road-network region to load (default: germany).",
+    )
+    parser.add_argument(
         "--max-mapping-distance-m",
         type=float,
         default=1000.0,
         help="Maximum coordinate-to-network mapping distance for origins and destinations.",
+    )
+    parser.add_argument(
+        "--energy-price-eur-per-kwh",
+        type=float,
+        default=None,
+        help="Optional manual energy price override, e.g. 0.35 for Berlin solver comparison.",
     )
     return parser.parse_args()
 
@@ -935,6 +1190,8 @@ def main() -> None:
     result = build_adapter_result(
         args.data_dir,
         max_mapping_distance_m=args.max_mapping_distance_m,
+        region=args.region,
+        energy_price_eur_per_kwh=args.energy_price_eur_per_kwh,
     )
     text = summarize(result)
     output_encoding = sys.stdout.encoding or "utf-8"

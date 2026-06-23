@@ -76,22 +76,23 @@ For each directed edge `e` and hazardous-material class `k`:
 The heuristic should use the same risk idea as the model. A practical edge risk score is:
 
 ```text
-RiskRate_{e,k} =
-    alpha * PopRate_e
-    + beta * AccRate_e
-    + gamma * NatRate_e
+BaseRiskRate_e =
+    0.40 * PopRate_e
+    + 0.40 * AccRate_e
+    + 0.20 * NatRate_e
 
-Risk_{e,k} = RiskRate_{e,k} * Len_e
+RiskRate_{e,k} = min(1, BaseRiskRate_e * HazardFactor_k)
+Risk_{e,k} = RiskRate_{e,k}
 ```
 
 where:
 
-- `PopRate_e` represents normalized population exposure per unit of distance;
-- `AccRate_e` represents normalized accident exposure per unit of distance;
-- `NatRate_e` represents normalized proximity to sensitive natural areas per unit of distance;
-- `alpha + beta + gamma = 1`.
+- `PopRate_e` is the min-max normalized `pop_per_meter` value;
+- `AccRate_e` is the min-max normalized accident `score`, which the current data defines as accidents divided by the accident-edge length;
+- `NatRate_e` is `1 - minmax(dist_to_nature_m)`, so shorter distance to a protected area means higher risk;
+- `HazardFactor_k` uses the agreed class multipliers, such as `2.0` for class `1.1D`, `1.0` for class `3`, and `0.8` for class `2`.
 
-This is a simplified length-weighted risk index. Multiplying the rate by `Len_e` makes path risk additive and prevents the result from changing merely because the same road is split into more graph edges. The normalization maxima and actual source fields must be recorded and shared with the solver.
+This is a simplified solver-aligned edge risk index. The current comparison version does not multiply the risk score by `Len_e`, because the mathematical model snapshot uses the normalized edge score directly. Normalization uses the complete loaded regional edge data before SCC and OD cropping. The minima, maxima, source fields, transformations, and the missing length factor are recorded in the result metadata.
 
 The variable vehicle cost on an edge can be scored as:
 
@@ -101,12 +102,14 @@ VC_{v,e} =
     + Len_e * energy_kwh_per_km_v * energy_price_e
 ```
 
+The energy price is an explicit run parameter. For the current Berlin solver-comparison run, the heuristic can use `0.35 EUR/kWh` to match the solver snapshot.
+
 For one delivery `l`, vehicle `v`, and candidate path `p`, the heuristic uses:
 
 ```text
 incremental_cost(l, v, p) =
     path_cost(v, p)
-    + FC_v if v is not active, otherwise 0
+    + FC_v
 
 assignment_score(l, v, p) =
     w1 * path_risk(l, p) / fixed_path_risk_scale
@@ -121,7 +124,7 @@ path_cost(v, p) = sum VC_{v,e} for all e in p
 path_length(p) = sum Len_e for all e in p
 ```
 
-Both scales are calculated once from the complete candidate set and then kept fixed for the whole assignment run. Ties are resolved by assignment score, path risk, incremental cost, vehicle ID, and path label. Fixed vehicle cost is added only when a previously unused vehicle becomes active.
+Both scales are calculated once from the complete candidate set and then kept fixed for the whole assignment run. Ties are resolved by assignment score, path risk, incremental cost, vehicle ID, and path label. Fixed vehicle cost is charged per delivery/trip to match the current solver snapshot.
 
 ## 6. Phase 1: Candidate Path Generation
 
@@ -133,7 +136,9 @@ Before searching for paths, remove all edges that are not allowed for the delive
 Allow_{e, Class_l} = 0  =>  edge e is not available
 ```
 
-Legal feasibility is a hard constraint. Forbidden edges are not high-cost alternatives; they are infeasible and cannot appear in candidate paths or in later local-search moves. The exact source of `Allow_{e,k}` can include ADR rules, tunnel restrictions, dangerous-goods routing rules, or local road restrictions, but the heuristic only uses the final permission value.
+Legal feasibility is a hard constraint. Forbidden edges are not high-cost alternatives. The current tunnel rule follows the shared A/B/C/D category matrix: classes `1.1D` and `1.5D` are forbidden in C/D tunnels, while classes `6` and `9` are forbidden in D tunnels.
+
+The implementation supports two network modes. `full` searches the complete routing graph. `solver_cropped` first keeps the largest strongly connected component and then applies the solver OD bounding box with buffer `0.3` for each delivery. Original arc IDs are retained instead of contracting degree chains. Because cropping can remove a legal detour, this case is reported as `crop_infeasible`, not as full-network route infeasibility.
 
 Then generate a small path set, for example:
 
@@ -151,6 +156,8 @@ weighted_edge_cost(e) =
 ```
 
 The scales are calculated once from the complete set of distance and risk candidates before weighted-path generation. They remain unchanged across all deliveries and permission masks and are recorded in the output metadata. This keeps the edge metric additive while making `w1` and `w2` meaningful across risk and distance units.
+
+The current default is `w1 = 0.65` and `w2 = 0.35`. Both values are runtime parameters, must be non-negative, and must sum to `1.0`.
 
 If variable cost differs strongly between vehicles, cost-based candidate paths can either use a vehicle-independent proxy cost or be generated separately for relevant vehicle types.
 
@@ -226,7 +233,7 @@ Change both the path and the vehicle for one delivery.
 
 This is useful when a safer path is longer and therefore needs a vehicle with a larger range.
 
-This move is accepted only after checking path permission, path connectivity, vehicle capacity, range, active vehicle status, and the updated objective value.
+This move is accepted only after checking path permission, path connectivity, vehicle capacity, range, trip fixed cost, and the updated objective value.
 
 ## 9. Feasibility Checks
 
@@ -252,7 +259,7 @@ Each delivery is an independent one-way OD task. The vehicle unloads at `D_l`, a
 path_length_l <= Range_v
 ```
 
-- fixed cost is counted only for active vehicles;
+- fixed cost is counted once for each selected delivery/trip;
 - total risk and total cost are recomputed from the selected paths.
 
 Charging stops are not included in the first heuristic version. A path is feasible only if its total length fits within the assigned vehicle range. This keeps the first implementation focused on path selection and vehicle assignment, while leaving charging decisions as a later extension.
@@ -275,17 +282,18 @@ The heuristic should return:
 - total cost;
 - normalized objective value;
 - feasibility status;
-- runtime.
+- data-preparation, network-preprocessing, mapping, candidate-generation, vehicle-assignment, export, algorithm, and end-to-end runtime;
+- network mode, crop buffer, cropped edge counts, hazard factors, and active risk components.
 
-These outputs are enough to compare the heuristic with the solver result:
+The CSV/JSON files and solver-style text report prepare a later comparison:
 
 - selected edges correspond to routing decisions;
 - vehicle assignments correspond to assignment decisions;
-- active vehicles correspond to vehicle activation.
+- active vehicles are reported as used vehicle types, while fixed cost is charged per selected delivery/trip.
 
 ## 11. Solver Comparison
 
-The heuristic should be compared with the solver on the same instances and the same objective interpretation.
+The heuristic should be compared with the solver on the same instances and the same objective interpretation. Solver-style formatting alone does not make the objective values directly comparable.
 
 Useful metrics:
 
@@ -299,9 +307,9 @@ Useful metrics:
 - capacity usage;
 - solver status;
 - solver bound or gap, if available;
-- heuristic gap compared with the solver objective or bound.
+- heuristic gap compared with the solver objective or bound, but only after both methods share the same evaluator and feasible network.
 
-If the solver proves optimality:
+If the solver proves optimality on the same network and both results use the same objective definition:
 
 ```text
 heuristic_gap_percent =
@@ -367,4 +375,4 @@ Implementation depends on a few project decisions becoming stable:
 - solver output format for comparing selected edges, vehicle assignments, active vehicles, objective value, risk, and cost;
 - small, medium, and large test instances.
 
-The next practical step is to create a toy prototype on a small artificial instance and then adapt it to the final data format.
+The next practical steps are to finalize the shared risk and energy-price definitions, add charging-stop decisions for long routes, and run systematic solver-versus-heuristic experiments.
