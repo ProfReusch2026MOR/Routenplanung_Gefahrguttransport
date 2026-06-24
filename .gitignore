@@ -48,3 +48,13 @@ pip-log.txt
 # OS files
 .DS_Store
 Thumbs.db
+
+
+*.csv
+*.pkl
+*.html
+*.xml
+*.pbf
+*.txt
+*.pdf
+*.xlsx
