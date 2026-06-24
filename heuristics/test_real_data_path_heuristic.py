@@ -1,5 +1,6 @@
 import pickle
 from dataclasses import replace
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -32,15 +33,19 @@ from heuristics.real_data_path_heuristic import (
     collapse_parallel_edges,
     candidate_to_row,
     crop_delivery_edges,
+    delivery_map_filename,
+    export_results,
     filter_largest_strong_component,
     generate_metric_candidates,
     hazard_class_factor,
     make_path_candidate,
+    nature_reserve_polygon_features,
     path_edges_from_nodes,
     prepare_metric_columns,
     reconstruct_node_path,
     resolve_delivery_mappings,
     run_heuristic,
+    scenario_specs,
     tunnel_allowed,
     validate_objective_weights,
 )
@@ -655,12 +660,165 @@ class AssignmentTests(unittest.TestCase):
         self.assertEqual(result.data_preparation_seconds, 0.3)
         self.assertGreaterEqual(result.end_to_end_runtime_seconds, 0.5)
 
+    def test_export_results_writes_geojson_and_html_map(self):
+        mapped_delivery = replace(
+            delivery(),
+            destination_latitude=0.002,
+            destination_longitude=0.002,
+        )
+        adapter = AdapterResult(
+            data_dir=Path("."),
+            region="test",
+            origin_name="Origin",
+            origin_node=0,
+            origin_distance_m=10.0,
+            origin_mapping_feasible=True,
+            max_mapping_distance_m=1_000.0,
+            node_table=pd.DataFrame(
+                {
+                    "node": [0, 1, 2],
+                    "lat": [0.0, 0.001, 0.002],
+                    "lon": [0.0, 0.001, 0.002],
+                }
+            ),
+            vehicles=[vehicle()],
+            deliveries=[mapped_delivery],
+            edge_table=pd.DataFrame(
+                {
+                    "arc_id": [1, 2],
+                    "u": [0, 1],
+                    "v": [1, 2],
+                    "oneway": ["yes", "yes"],
+                    "length_km": [1.0, 1.0],
+                    "risk_score": [0.1, 0.1],
+                    "tunnel": ["no", "no"],
+                    "is_tunnel_edge": [False, False],
+                }
+            ),
+            charging_stations=pd.DataFrame(),
+            edge_permission_ready=True,
+            energy_price_scenario="test",
+            energy_price_eur_per_kwh=0.0,
+            risk_metadata={},
+            notes=[],
+            warnings=[],
+        )
+        result = run_heuristic(adapter, network_mode="full")
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            export_results(result, output_dir)
+            geojson = json.loads(
+                (output_dir / "heuristic_selected_paths.geojson").read_text(
+                    encoding="utf-8"
+                )
+            )
+            layers = json.loads(
+                (output_dir / "heuristic_map_layers.geojson").read_text(
+                    encoding="utf-8"
+                )
+            )
+            html = (output_dir / "heuristic_map.html").read_text(encoding="utf-8")
+            delivery_map_exists = (
+                output_dir / delivery_map_filename("delivery_1")
+            ).exists()
+        self.assertEqual(geojson["type"], "FeatureCollection")
+        self.assertEqual(len(geojson["features"]), 1)
+        layer_types = {feature["properties"]["layer_type"] for feature in layers["features"]}
+        self.assertTrue(
+            {
+                "origin",
+                "destination",
+                "route_node",
+                "edge_segment",
+                "heat_point",
+            }.issubset(layer_types)
+        )
+        self.assertIn("leaflet_heat.min.js", html)
+        self.assertIn("Populationsdichte", html)
+        self.assertIn("L.polyline", html)
+        self.assertTrue(delivery_map_exists)
+        self.assertIn("Naturschutznaehe", html)
+        heat_metrics = {
+            feature["properties"].get("metric")
+            for feature in layers["features"]
+            if feature["properties"]["layer_type"] == "heat_point"
+        }
+        self.assertEqual(heat_metrics, {"population", "accident", "nature", "risk"})
+
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            (output_dir / "heuristic_map.html").write_text("old", encoding="utf-8")
+            (output_dir / "route_lieferung_1.html").write_text("old", encoding="utf-8")
+            exported = export_results(result, output_dir, export_map=False)
+            self.assertTrue((output_dir / "heuristic_candidates.csv").exists())
+            self.assertTrue((output_dir / "heuristic_selected_paths.csv").exists())
+            self.assertTrue((output_dir / "heuristic_summary.json").exists())
+            self.assertFalse((output_dir / "heuristic_map.html").exists())
+            self.assertFalse((output_dir / "route_lieferung_1.html").exists())
+            self.assertFalse((output_dir / "heuristic_map_layers.geojson").exists())
+            self.assertGreaterEqual(exported.export_seconds, 0.0)
+
+    def test_nature_reserves_export_as_polygons_when_geometry_is_available(self):
+        candidate = self.path_candidate("delivery_1")
+        candidate = replace(candidate, feasible=True, node_path=(0, 1, 2))
+        node_coordinates = {
+            0: (52.50, 13.40),
+            1: (52.51, 13.41),
+            2: (52.52, 13.42),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            data_dir = Path(directory)
+            all_data = {
+                "nature_reserves": pd.DataFrame(
+                    {
+                        "NAME": ["Test reserve", "Too far"],
+                        "STATUS": ["active", "active"],
+                        "FLAECHE": [12.5, 99.0],
+                        "geometry": [
+                            (
+                                "POLYGON ((13.39 52.49, 13.43 52.49, "
+                                "13.43 52.53, 13.39 52.53, 13.39 52.49))"
+                            ),
+                            (
+                                "POLYGON ((10 50, 10.1 50, "
+                                "10.1 50.1, 10 50.1, 10 50))"
+                            ),
+                        ],
+                    }
+                )
+            }
+            with (data_dir / "all_data.pkl").open("wb") as file:
+                pickle.dump(all_data, file)
+            features = nature_reserve_polygon_features(
+                data_dir,
+                [candidate],
+                node_coordinates,
+            )
+        self.assertEqual(len(features), 1)
+        self.assertEqual(features[0]["geometry"]["type"], "Polygon")
+        self.assertEqual(
+            features[0]["properties"]["layer_type"],
+            "nature_reserve_polygon",
+        )
+        self.assertEqual(features[0]["properties"]["name"], "Test reserve")
+
     def test_objective_weights_must_be_nonnegative_and_sum_to_one(self):
         validate_objective_weights(0.65, 0.35)
         with self.assertRaisesRegex(ValueError, "sum to 1.0"):
             validate_objective_weights(0.5, 0.4)
         with self.assertRaisesRegex(ValueError, "non-negative"):
             validate_objective_weights(-0.1, 1.1)
+
+    def test_comparison_scenarios_are_opt_in(self):
+        self.assertEqual(scenario_specs(0.65, 0.35), (("normal", 0.65, 0.35),))
+        self.assertEqual(
+            scenario_specs(0.65, 0.35, include_comparison_scenarios=True),
+            (
+                ("normal", 0.65, 0.35),
+                ("no_risk_weight", 0.0, 1.0),
+                ("no_cost_weight", 1.0, 0.0),
+            ),
+        )
 
     def path_candidate(self, delivery_id, label="a", length=10.0, risk=1.0):
         row = pd.DataFrame(

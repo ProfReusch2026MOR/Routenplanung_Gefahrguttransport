@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, replace
+import html
 import json
+import pickle
 from pathlib import Path
 import sys
 import time
@@ -56,6 +58,9 @@ DESTINATION_MAPPING_CANDIDATES = 250
 DEFAULT_NETWORK_MODE = "solver_cropped"
 SUPPORTED_NETWORK_MODES = ("full", "solver_cropped")
 SOLVER_CROP_BUFFER = 0.3
+MAP_BACKGROUND_EDGE_LIMIT = 8_000
+MAP_NATURE_BBOX_BUFFER_DEGREES = 0.05
+MAP_NATURE_RESERVE_LIMIT = 250
 
 HAZARD_CLASS_FACTORS = {
     "3": 1.0,
@@ -132,12 +137,14 @@ class PathCandidate:
     destination_match_distance_m: float
     arc_ids: Tuple[int, ...]
     node_path: Tuple[int, ...]
+    edge_details: Tuple[Dict[str, object], ...]
 
 
 @dataclass(frozen=True)
 class HeuristicResult:
     candidates: List[PathCandidate]
     selected: List[PathCandidate]
+    data_dir: Path
     region: str
     network_mode: str
     risk_weight: float
@@ -167,6 +174,16 @@ class HeuristicResult:
     max_mapping_distance_m: float
     risk_metadata: Dict[str, object]
     data_warnings: Tuple[str, ...]
+    node_coordinates: Dict[int, Tuple[float, float]]
+    map_background_edges: Tuple[Dict[str, object], ...]
+    nature_reserve_polygons: Tuple[Dict[str, object], ...]
+
+
+@dataclass(frozen=True)
+class ScenarioRun:
+    name: str
+    result: HeuristicResult
+    output_dir: Path
 
 
 def build_destination_options(
@@ -314,6 +331,14 @@ def build_routing_table(edge_table: pd.DataFrame) -> pd.DataFrame:
     ]
     if "risk_rate_per_km" in edge_table.columns:
         columns.append("risk_rate_per_km")
+    for optional_column in [
+        "base_risk_score",
+        "population_rate_norm",
+        "accident_rate_norm",
+        "nature_rate_norm",
+    ]:
+        if optional_column in edge_table.columns:
+            columns.append(optional_column)
     base = edge_table[columns].copy()
     base["tunnel_category"] = base["tunnel"].map(tunnel_category)
     oneway = base["oneway"].astype(str).str.strip().str.lower()
@@ -556,6 +581,216 @@ def path_edges_from_nodes(
     return merged.sort_values("step")
 
 
+def edge_detail_records(path_edges: pd.DataFrame) -> Tuple[Dict[str, object], ...]:
+    detail_columns = [
+        "step",
+        "arc_id",
+        "route_u",
+        "route_v",
+        "length_km",
+        "risk_score",
+        "population_rate_norm",
+        "accident_rate_norm",
+        "nature_rate_norm",
+        "base_risk_score",
+        "is_tunnel_edge",
+        "is_reverse",
+    ]
+    available = [column for column in detail_columns if column in path_edges.columns]
+    records: List[Dict[str, object]] = []
+    for _, row in path_edges[available].iterrows():
+        record: Dict[str, object] = {}
+        for column in available:
+            value = row[column]
+            if pd.isna(value):
+                value = 0.0
+            if column in {"step", "arc_id", "route_u", "route_v"}:
+                record[column] = int(value)
+            elif column in {"is_tunnel_edge", "is_reverse"}:
+                record[column] = bool(value)
+            else:
+                record[column] = float(value)
+        records.append(record)
+    return tuple(records)
+
+
+def map_background_edge_records(
+    delivery_routing_tables: Dict[str, pd.DataFrame],
+    node_coordinates: Dict[int, Tuple[float, float]],
+    max_edges: int = MAP_BACKGROUND_EDGE_LIMIT,
+) -> Tuple[Dict[str, object], ...]:
+    tables = [table for table in delivery_routing_tables.values() if not table.empty]
+    if not tables or max_edges <= 0:
+        return tuple()
+
+    background = pd.concat(tables, ignore_index=True)
+    background = background.drop_duplicates(["route_u", "route_v", "arc_id"])
+    metric_columns = [
+        "population_rate_norm",
+        "accident_rate_norm",
+        "nature_rate_norm",
+        "risk_score",
+    ]
+    for column in metric_columns:
+        if column not in background.columns:
+            background[column] = 0.0
+
+    per_metric = max(1, max_edges // (len(metric_columns) + 1))
+    samples = []
+    for column in metric_columns:
+        samples.append(
+            background.nlargest(
+                min(per_metric, len(background)),
+                column,
+                keep="first",
+            )
+        )
+    samples.append(
+        background.iloc[
+            np.linspace(
+                0,
+                len(background) - 1,
+                min(per_metric, len(background)),
+                dtype=int,
+            )
+        ]
+    )
+    sampled = (
+        pd.concat(samples, ignore_index=True)
+        .drop_duplicates(["route_u", "route_v", "arc_id"])
+        .head(max_edges)
+    )
+
+    records: List[Dict[str, object]] = []
+    for _, row in sampled.iterrows():
+        route_u = int(row["route_u"])
+        route_v = int(row["route_v"])
+        start = node_coordinates.get(route_u)
+        end = node_coordinates.get(route_v)
+        if start is None or end is None:
+            continue
+        start_lat, start_lon = start
+        end_lat, end_lon = end
+        records.append(
+            {
+                "route_u": route_u,
+                "route_v": route_v,
+                "arc_id": int(row["arc_id"]),
+                "coordinates": [[start_lon, start_lat], [end_lon, end_lat]],
+                "length_km": float(row.get("length_km", 0.0)),
+                "risk_score": float(row.get("risk_score", 0.0)),
+                "population_rate_norm": float(row.get("population_rate_norm", 0.0)),
+                "accident_rate_norm": float(row.get("accident_rate_norm", 0.0)),
+                "nature_rate_norm": float(row.get("nature_rate_norm", 0.0)),
+                "base_risk_score": float(row.get("base_risk_score", 0.0)),
+                "is_tunnel_edge": bool(row.get("is_tunnel_edge", False)),
+            }
+        )
+    return tuple(records)
+
+
+def selected_route_bbox(
+    selected: List[PathCandidate],
+    node_coordinates: Dict[int, Tuple[float, float]],
+    buffer_degrees: float = MAP_NATURE_BBOX_BUFFER_DEGREES,
+) -> Optional[Tuple[float, float, float, float]]:
+    lats: List[float] = []
+    lons: List[float] = []
+    for candidate in selected:
+        if not candidate.feasible:
+            continue
+        for node_id in candidate.node_path:
+            point = node_coordinates.get(int(node_id))
+            if point is None:
+                continue
+            lat, lon = point
+            lats.append(lat)
+            lons.append(lon)
+    if not lats or not lons:
+        return None
+    return (
+        min(lons) - buffer_degrees,
+        min(lats) - buffer_degrees,
+        max(lons) + buffer_degrees,
+        max(lats) + buffer_degrees,
+    )
+
+
+def json_safe_property(value: object) -> Optional[object]:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, (int, float, str, bool)):
+        return value
+    return str(value)
+
+
+def nature_reserve_polygon_features(
+    data_dir: Path,
+    selected: List[PathCandidate],
+    node_coordinates: Dict[int, Tuple[float, float]],
+    max_features: int = MAP_NATURE_RESERVE_LIMIT,
+) -> Tuple[Dict[str, object], ...]:
+    all_data_path = data_dir / "all_data.pkl"
+    bbox = selected_route_bbox(selected, node_coordinates)
+    if not all_data_path.exists() or bbox is None or max_features <= 0:
+        return tuple()
+
+    try:
+        from shapely.geometry import box, mapping
+        from shapely import wkt
+    except ImportError:
+        return tuple()
+
+    try:
+        with all_data_path.open("rb") as file:
+            all_data = pickle.load(file)
+    except (OSError, pickle.PickleError):
+        return tuple()
+
+    nature_table = all_data.get("nature_reserves") if isinstance(all_data, dict) else None
+    if not isinstance(nature_table, pd.DataFrame) or "geometry" not in nature_table.columns:
+        return tuple()
+
+    clip_box = box(*bbox)
+    raw_features: List[Tuple[float, Dict[str, object]]] = []
+    for _, row in nature_table.iterrows():
+        geometry_value = row.get("geometry")
+        if geometry_value is None or pd.isna(geometry_value):
+            continue
+        try:
+            geometry = wkt.loads(str(geometry_value))
+        except Exception:
+            continue
+        if geometry.is_empty or not geometry.intersects(clip_box):
+            continue
+        clipped = geometry.intersection(clip_box)
+        if clipped.is_empty:
+            continue
+        simplified = clipped.simplify(0.0002, preserve_topology=True)
+        if simplified.is_empty:
+            continue
+        area_value = json_safe_property(row.get("FLAECHE"))
+        raw_features.append(
+            (
+                float(simplified.area),
+                {
+                    "type": "Feature",
+                    "geometry": mapping(simplified),
+                    "properties": {
+                        "layer_type": "nature_reserve_polygon",
+                        "name": json_safe_property(row.get("NAME"))
+                        or "Nature reserve",
+                        "status": json_safe_property(row.get("STATUS")),
+                        "area_source": area_value,
+                    },
+                },
+            )
+        )
+
+    raw_features.sort(key=lambda item: item[0], reverse=True)
+    return tuple(feature for _, feature in raw_features[:max_features])
+
+
 def resolve_delivery_mappings(
     routing_table: pd.DataFrame,
     context: GraphContext,
@@ -691,6 +926,7 @@ def empty_candidate(
         destination_match_distance_m=mapping.distance_m,
         arc_ids=tuple(),
         node_path=tuple(),
+        edge_details=tuple(),
     )
 
 
@@ -763,6 +999,7 @@ def make_path_candidate(
         destination_match_distance_m=mapping.distance_m,
         arc_ids=tuple(int(arc_id) for arc_id in path_edges["arc_id"]),
         node_path=node_path,
+        edge_details=edge_detail_records(path_edges),
     )
 
 
@@ -1140,10 +1377,19 @@ def run_heuristic(
             ),
         }
     )
+    node_coordinates = {
+        int(row["node"]): (float(row["lat"]), float(row["lon"]))
+        for _, row in adapter_result.node_table.drop_duplicates("node").iterrows()
+    }
+    map_background_edges = map_background_edge_records(
+        delivery_routing_tables,
+        node_coordinates,
+    )
     runtime_seconds = time.perf_counter() - start
     return HeuristicResult(
         candidates=all_candidates,
         selected=selected,
+        data_dir=adapter_result.data_dir,
         region=adapter_result.region,
         network_mode=network_mode,
         risk_weight=risk_weight,
@@ -1175,6 +1421,9 @@ def run_heuristic(
         max_mapping_distance_m=adapter_result.max_mapping_distance_m,
         risk_metadata=result_metadata,
         data_warnings=tuple(adapter_result.warnings),
+        node_coordinates=node_coordinates,
+        map_background_edges=map_background_edges,
+        nature_reserve_polygons=tuple(),
     )
 
 
@@ -1454,6 +1703,467 @@ def summary_dict(result: HeuristicResult) -> Dict[str, object]:
     }
 
 
+def route_coordinates(
+    candidate: PathCandidate,
+    node_coordinates: Dict[int, Tuple[float, float]],
+) -> List[List[float]]:
+    coordinates: List[List[float]] = []
+    for node_id in candidate.node_path:
+        point = node_coordinates.get(int(node_id))
+        if point is None:
+            continue
+        lat, lon = point
+        coordinates.append([lon, lat])
+    return coordinates
+
+
+def selected_paths_geojson(result: HeuristicResult) -> Dict[str, object]:
+    features = []
+    for candidate in result.selected:
+        coordinates = route_coordinates(candidate, result.node_coordinates)
+        if not candidate.feasible or len(coordinates) < 2:
+            continue
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": coordinates,
+                },
+                "properties": {
+                    "delivery_id": candidate.delivery_id,
+                    "destination_name": candidate.destination_name,
+                    "vehicle_id": candidate.vehicle_id,
+                    "hazard_class": candidate.hazard_class,
+                    "candidate_label": candidate.label,
+                    "path_length_km": round(candidate.path_length_km, 6),
+                    "path_risk": round(candidate.path_risk, 6),
+                    "variable_cost": (
+                        round(candidate.variable_cost, 6)
+                        if candidate.variable_cost is not None
+                        else None
+                    ),
+                    "fixed_cost": (
+                        round(candidate.activation_cost, 6)
+                        if candidate.activation_cost is not None
+                        else None
+                    ),
+                    "total_cost": round(
+                        (candidate.variable_cost or 0.0)
+                        + (candidate.activation_cost or 0.0),
+                        6,
+                    ),
+                    "edge_count": candidate.edge_count,
+                    "tunnel_edges_used": candidate.tunnel_edges_used,
+                },
+            }
+        )
+    return {"type": "FeatureCollection", "features": features}
+
+
+def point_feature(
+    node_id: int,
+    coordinates: List[float],
+    properties: Dict[str, object],
+) -> Dict[str, object]:
+    return {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": coordinates},
+        "properties": {"node_id": int(node_id), **properties},
+    }
+
+
+def heat_point_features(
+    background_edges: Tuple[Dict[str, object], ...],
+) -> List[Dict[str, object]]:
+    metrics = {
+        "population": "population_rate_norm",
+        "accident": "accident_rate_norm",
+        "nature": "nature_rate_norm",
+        "risk": "risk_score",
+    }
+    features: List[Dict[str, object]] = []
+    for edge in background_edges:
+        coordinates = edge.get("coordinates", [])
+        if len(coordinates) != 2:
+            continue
+        lon = (float(coordinates[0][0]) + float(coordinates[1][0])) / 2
+        lat = (float(coordinates[0][1]) + float(coordinates[1][1])) / 2
+        for metric, source in metrics.items():
+            features.append(
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                    "properties": {
+                        "layer_type": "heat_point",
+                        "metric": metric,
+                        "value": round(float(edge.get(source, 0.0)), 6),
+                        "arc_id": edge.get("arc_id"),
+                    },
+                }
+            )
+    return features
+
+
+def selected_map_layers_geojson(result: HeuristicResult) -> Dict[str, object]:
+    features: List[Dict[str, object]] = []
+    seen_origins = set()
+    seen_route_nodes = set()
+    for candidate in result.selected:
+        if not candidate.feasible or len(candidate.node_path) < 2:
+            continue
+        origin_node = int(candidate.node_path[0])
+        destination_node = int(candidate.node_path[-1])
+        origin_point = result.node_coordinates.get(origin_node)
+        destination_point = result.node_coordinates.get(destination_node)
+        if origin_point is not None and origin_node not in seen_origins:
+            seen_origins.add(origin_node)
+            lat, lon = origin_point
+            features.append(
+                point_feature(
+                    origin_node,
+                    [lon, lat],
+                    {
+                        "layer_type": "origin",
+                        "label": "Origin",
+                        "delivery_id": "all",
+                    },
+                )
+            )
+        if destination_point is not None:
+            lat, lon = destination_point
+            features.append(
+                point_feature(
+                    destination_node,
+                    [lon, lat],
+                    {
+                        "layer_type": "destination",
+                        "label": candidate.destination_name,
+                        "delivery_id": candidate.delivery_id,
+                    },
+                )
+            )
+
+        for step, node_id in enumerate(candidate.node_path):
+            key = (candidate.delivery_id, int(node_id))
+            point = result.node_coordinates.get(int(node_id))
+            if point is None or key in seen_route_nodes:
+                continue
+            seen_route_nodes.add(key)
+            lat, lon = point
+            features.append(
+                point_feature(
+                    int(node_id),
+                    [lon, lat],
+                    {
+                        "layer_type": "route_node",
+                        "delivery_id": candidate.delivery_id,
+                        "step": step,
+                    },
+                )
+            )
+
+        for detail in candidate.edge_details:
+            route_u = int(detail.get("route_u", 0))
+            route_v = int(detail.get("route_v", 0))
+            start = result.node_coordinates.get(route_u)
+            end = result.node_coordinates.get(route_v)
+            if start is None or end is None:
+                continue
+            start_lat, start_lon = start
+            end_lat, end_lon = end
+            features.append(
+                {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": [[start_lon, start_lat], [end_lon, end_lat]],
+                    },
+                    "properties": {
+                        "layer_type": "edge_segment",
+                        "delivery_id": candidate.delivery_id,
+                        "destination_name": candidate.destination_name,
+                        "arc_id": detail.get("arc_id"),
+                        "step": detail.get("step"),
+                        "length_km": round(float(detail.get("length_km", 0.0)), 6),
+                        "risk_score": round(float(detail.get("risk_score", 0.0)), 6),
+                        "population_rate_norm": round(
+                            float(detail.get("population_rate_norm", 0.0)),
+                            6,
+                        ),
+                        "accident_rate_norm": round(
+                            float(detail.get("accident_rate_norm", 0.0)),
+                            6,
+                        ),
+                        "nature_rate_norm": round(
+                            float(detail.get("nature_rate_norm", 0.0)),
+                            6,
+                        ),
+                        "base_risk_score": round(
+                            float(detail.get("base_risk_score", 0.0)),
+                            6,
+                        ),
+                        "is_tunnel_edge": bool(detail.get("is_tunnel_edge", False)),
+                    },
+                }
+            )
+    features.extend(heat_point_features(result.map_background_edges))
+    features.extend(result.nature_reserve_polygons)
+    return {"type": "FeatureCollection", "features": features}
+
+
+def delivery_map_filename(delivery_id: str) -> str:
+    suffix = str(delivery_id)
+    if suffix.startswith("delivery_"):
+        suffix = suffix.removeprefix("delivery_")
+    safe_suffix = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "_"
+        for character in suffix
+    )
+    return f"route_lieferung_{safe_suffix}.html"
+
+
+def map_feature_matches_delivery(
+    feature: Dict[str, object],
+    selected_delivery_id: Optional[str],
+) -> bool:
+    properties = feature.get("properties", {})
+    if selected_delivery_id is None:
+        return True
+    delivery_id = properties.get("delivery_id")
+    return delivery_id in {selected_delivery_id, "all"}
+
+
+def folium_locations(coordinates: List[List[float]]) -> List[List[float]]:
+    return [[float(lat), float(lon)] for lon, lat in coordinates]
+
+
+def folium_map_html(
+    route_geojson: Dict[str, object],
+    layer_geojson: Dict[str, object],
+    result: HeuristicResult,
+    selected_delivery_id: Optional[str] = None,
+) -> str:
+    try:
+        import folium
+        from folium.plugins import HeatMap, MiniMap
+    except ImportError as error:  # pragma: no cover - environment guard
+        raise RuntimeError(
+            "folium is required for route map export. Install folium or skip map export."
+        ) from error
+
+    route_features = [
+        feature
+        for feature in layer_geojson.get("features", [])
+        if feature.get("properties", {}).get("layer_type") == "edge_segment"
+        and map_feature_matches_delivery(feature, selected_delivery_id)
+    ]
+    point_features = [
+        feature
+        for feature in layer_geojson.get("features", [])
+        if feature.get("properties", {}).get("layer_type")
+        in {"origin", "destination", "route_node"}
+        and map_feature_matches_delivery(feature, selected_delivery_id)
+    ]
+    all_route_coordinates = [
+        location
+        for feature in route_features
+        for location in folium_locations(feature.get("geometry", {}).get("coordinates", []))
+    ]
+    center = [52.52, 13.405]
+    if all_route_coordinates:
+        center = [
+            sum(location[0] for location in all_route_coordinates)
+            / len(all_route_coordinates),
+            sum(location[1] for location in all_route_coordinates)
+            / len(all_route_coordinates),
+        ]
+
+    route_title = (
+        f"Heuristic route {selected_delivery_id}"
+        if selected_delivery_id is not None
+        else "Heuristic selected routes"
+    )
+    route_map = folium.Map(location=center, zoom_start=12, tiles="CartoDB positron")
+    MiniMap(toggle_display=True).add_to(route_map)
+
+    metric_layers = [
+        ("population", "Populationsdichte"),
+        ("accident", "Unfallrate"),
+        ("nature", "Naturschutznaehe"),
+        ("risk", "Gesamtrisiko"),
+    ]
+    for metric, label in metric_layers:
+        heat_data = []
+        for feature in layer_geojson.get("features", []):
+            properties = feature.get("properties", {})
+            if (
+                properties.get("layer_type") != "heat_point"
+                or properties.get("metric") != metric
+            ):
+                continue
+            value = float(properties.get("value") or 0.0)
+            if value <= 0.0:
+                continue
+            lon, lat = feature.get("geometry", {}).get("coordinates", [None, None])
+            if lon is None or lat is None:
+                continue
+            heat_data.append([float(lat), float(lon), value])
+        heat_layer = folium.FeatureGroup(name=label, show=False)
+        HeatMap(
+            heat_data,
+            name=label,
+            min_opacity=0.2,
+            radius=8,
+            blur=6,
+            max_zoom=15,
+            gradient={0.0: "green", 0.5: "yellow", 1.0: "red"},
+        ).add_to(heat_layer)
+        heat_layer.add_to(route_map)
+
+    route_colors = [
+        "#E63946",
+        "#2196F3",
+        "#4CAF50",
+        "#FF9800",
+        "#9C27B0",
+        "#00BCD4",
+    ]
+    delivery_colors: Dict[str, str] = {}
+    route_layer = folium.FeatureGroup(name=route_title, show=True)
+    for feature in route_features:
+        properties = feature.get("properties", {})
+        delivery_id = str(properties.get("delivery_id", "delivery"))
+        if delivery_id not in delivery_colors:
+            delivery_colors[delivery_id] = route_colors[
+                len(delivery_colors) % len(route_colors)
+            ]
+        locations = folium_locations(
+            feature.get("geometry", {}).get("coordinates", [])
+        )
+        if len(locations) < 2:
+            continue
+        tooltip = folium.Tooltip(
+            (
+                f"Kante {properties.get('arc_id')}<br>"
+                f"Lieferung: {html.escape(delivery_id)}<br>"
+                f"Distanz: {float(properties.get('length_km') or 0.0):.3f} km<br>"
+                f"Risiko: {float(properties.get('risk_score') or 0.0):.4f}"
+            )
+        )
+        folium.PolyLine(
+            locations=locations,
+            color=delivery_colors[delivery_id],
+            weight=5,
+            opacity=0.9,
+            tooltip=tooltip,
+        ).add_to(route_layer)
+    route_layer.add_to(route_map)
+
+    route_node_layer = folium.FeatureGroup(name="Route nodes", show=False)
+    for feature in point_features:
+        properties = feature.get("properties", {})
+        layer_type = properties.get("layer_type")
+        lon, lat = feature.get("geometry", {}).get("coordinates", [None, None])
+        if lon is None or lat is None:
+            continue
+        location = [float(lat), float(lon)]
+        if layer_type == "origin":
+            folium.Marker(
+                location=location,
+                popup=folium.Popup(
+                    f"<b>Depot</b><br>Knoten: {properties.get('node_id')}",
+                    max_width=200,
+                ),
+                icon=folium.Icon(color="blue", icon="home", prefix="fa"),
+            ).add_to(route_map)
+        elif layer_type == "destination":
+            folium.Marker(
+                location=location,
+                popup=folium.Popup(
+                    f"<b>{html.escape(str(properties.get('label', 'Kunde')))}</b><br>"
+                    f"Lieferung: {html.escape(str(properties.get('delivery_id', '-')))}<br>"
+                    f"Knoten: {properties.get('node_id')}",
+                    max_width=250,
+                ),
+                icon=folium.Icon(color="red", icon="truck", prefix="fa"),
+            ).add_to(route_map)
+        elif layer_type == "route_node":
+            folium.CircleMarker(
+                location=location,
+                radius=2.2,
+                color="#555555",
+                fill=True,
+                fill_color="#ffffff",
+                fill_opacity=0.75,
+                popup=(
+                    f"Lieferung: {properties.get('delivery_id')}<br>"
+                    f"Knoten: {properties.get('node_id')}<br>"
+                    f"Step: {properties.get('step')}"
+                ),
+            ).add_to(route_node_layer)
+    route_node_layer.add_to(route_map)
+
+    nature_features = [
+        feature
+        for feature in layer_geojson.get("features", [])
+        if feature.get("properties", {}).get("layer_type")
+        == "nature_reserve_polygon"
+    ]
+    if nature_features:
+        nature_layer = folium.FeatureGroup(name="Naturschutzgebiete", show=False)
+        folium.GeoJson(
+            {"type": "FeatureCollection", "features": nature_features},
+            name="Naturschutzgebiete",
+            style_function=lambda _feature: {
+                "color": "#1b7f3a",
+                "weight": 1,
+                "opacity": 0.7,
+                "fillColor": "#3fbf6f",
+                "fillOpacity": 0.28,
+            },
+            tooltip=folium.GeoJsonTooltip(fields=["name"], aliases=["Name:"]),
+        ).add_to(nature_layer)
+        nature_layer.add_to(route_map)
+
+    folium.LayerControl(collapsed=False).add_to(route_map)
+    if all_route_coordinates:
+        route_map.fit_bounds(all_route_coordinates, padding=(24, 24))
+    return route_map.get_root().render()
+
+
+def write_map_outputs(result: HeuristicResult, output_dir: Path) -> None:
+    geojson = selected_paths_geojson(result)
+    layer_geojson = selected_map_layers_geojson(result)
+    with (output_dir / "heuristic_selected_paths.geojson").open(
+        "w",
+        encoding="utf-8",
+    ) as file:
+        json.dump(geojson, file, indent=2, ensure_ascii=False)
+    with (output_dir / "heuristic_map_layers.geojson").open(
+        "w",
+        encoding="utf-8",
+    ) as file:
+        json.dump(layer_geojson, file, indent=2, ensure_ascii=False)
+    with (output_dir / "heuristic_map.html").open("w", encoding="utf-8") as file:
+        file.write(folium_map_html(geojson, layer_geojson, result))
+    for candidate in result.selected:
+        if not candidate.feasible:
+            continue
+        with (output_dir / delivery_map_filename(candidate.delivery_id)).open(
+            "w",
+            encoding="utf-8",
+        ) as file:
+            file.write(
+                folium_map_html(
+                    geojson,
+                    layer_geojson,
+                    result,
+                    selected_delivery_id=candidate.delivery_id,
+                )
+            )
+
+
 def write_summary_outputs(result: HeuristicResult, output_dir: Path) -> None:
     with (output_dir / "heuristic_summary.json").open("w", encoding="utf-8") as file:
         json.dump(summary_dict(result), file, indent=2, ensure_ascii=False)
@@ -1461,18 +2171,47 @@ def write_summary_outputs(result: HeuristicResult, output_dir: Path) -> None:
         file.write(solver_style_report(result))
 
 
-def export_results(result: HeuristicResult, output_dir: Path) -> HeuristicResult:
+def remove_map_outputs(output_dir: Path) -> None:
+    map_files = [
+        output_dir / "heuristic_selected_paths.geojson",
+        output_dir / "heuristic_map_layers.geojson",
+        output_dir / "heuristic_map.html",
+    ]
+    map_files.extend(output_dir.glob("route_lieferung_*.html"))
+    for path in map_files:
+        if path.exists() and path.is_file():
+            path.unlink()
+
+
+def export_results(
+    result: HeuristicResult,
+    output_dir: Path,
+    export_map: bool = True,
+) -> HeuristicResult:
     export_start = time.perf_counter()
     output_dir.mkdir(parents=True, exist_ok=True)
+    map_ready_result = result
+    if export_map:
+        map_ready_result = replace(
+            result,
+            nature_reserve_polygons=nature_reserve_polygon_features(
+                result.data_dir,
+                result.selected,
+                result.node_coordinates,
+            ),
+        )
     candidates_dataframe(result).to_csv(output_dir / "heuristic_candidates.csv", index=False)
-    selected_dataframe(result).to_csv(
+    selected_dataframe(map_ready_result).to_csv(
         output_dir / "heuristic_selected_paths.csv",
         index=False,
     )
-    write_summary_outputs(result, output_dir)
+    if export_map:
+        write_map_outputs(map_ready_result, output_dir)
+    else:
+        remove_map_outputs(output_dir)
     export_seconds = time.perf_counter() - export_start
     updated = replace(
-        result,
+        map_ready_result,
         export_seconds=export_seconds,
         end_to_end_runtime_seconds=(
             result.startup_seconds
@@ -1482,7 +2221,105 @@ def export_results(result: HeuristicResult, output_dir: Path) -> HeuristicResult
         ),
     )
     write_summary_outputs(updated, output_dir)
-    return updated
+    final_export_seconds = time.perf_counter() - export_start
+    final = replace(
+        updated,
+        export_seconds=final_export_seconds,
+        end_to_end_runtime_seconds=(
+            result.startup_seconds
+            + result.data_preparation_seconds
+            + result.runtime_seconds
+            + final_export_seconds
+        ),
+    )
+    write_summary_outputs(final, output_dir)
+    return final
+
+
+def scenario_specs(
+    risk_weight: float,
+    cost_weight: float,
+    include_comparison_scenarios: bool = False,
+) -> Tuple[Tuple[str, float, float], ...]:
+    specs = [("normal", risk_weight, cost_weight)]
+    if include_comparison_scenarios:
+        specs.extend(
+            [
+                ("no_risk_weight", 0.0, 1.0),
+                ("no_cost_weight", 1.0, 0.0),
+            ]
+        )
+    return tuple(specs)
+
+
+def export_scenario_results(
+    normal_result: HeuristicResult,
+    adapter_result: AdapterResult,
+    output_dir: Path,
+    network_mode: str,
+    startup_seconds: float,
+    data_preparation_seconds: float,
+    export_map: bool = True,
+    include_comparison_scenarios: bool = False,
+) -> Tuple[ScenarioRun, ...]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    scenario_runs: List[ScenarioRun] = []
+    for name, risk_weight, cost_weight in scenario_specs(
+        normal_result.risk_weight,
+        normal_result.cost_weight,
+        include_comparison_scenarios=include_comparison_scenarios,
+    ):
+        if name == "normal":
+            scenario_result = normal_result
+        else:
+            scenario_result = run_heuristic(
+                adapter_result,
+                network_mode=network_mode,
+                risk_weight=risk_weight,
+                cost_weight=cost_weight,
+                startup_seconds=startup_seconds,
+                data_preparation_seconds=data_preparation_seconds,
+            )
+        scenario_output_dir = output_dir / name
+        exported = export_results(
+            scenario_result,
+            scenario_output_dir,
+            export_map=export_map,
+        )
+        scenario_runs.append(
+            ScenarioRun(
+                name=name,
+                result=exported,
+                output_dir=scenario_output_dir,
+            )
+        )
+
+    rows = [
+        {
+            "scenario": run.name,
+            "risk_weight": run.result.risk_weight,
+            "cost_weight": run.result.cost_weight,
+            "feasible_deliveries": run.result.feasible_deliveries,
+            "total_risk": run.result.total_risk,
+            "total_variable_cost": run.result.total_variable_cost,
+            "total_fixed_cost": run.result.total_fixed_cost,
+            "total_cost": run.result.total_cost,
+            "algorithm_runtime_seconds": run.result.runtime_seconds,
+            "end_to_end_runtime_seconds": run.result.end_to_end_runtime_seconds,
+            "output_dir": str(run.output_dir),
+        }
+        for run in scenario_runs
+    ]
+    pd.DataFrame(rows).to_csv(
+        output_dir / "heuristic_scenario_summary.csv",
+        index=False,
+    )
+    with (output_dir / "heuristic_scenario_summary.json").open(
+        "w",
+        encoding="utf-8",
+    ) as file:
+        json.dump(rows, file, indent=2, ensure_ascii=False)
+    return tuple(scenario_runs)
 
 
 def summarize(result: HeuristicResult) -> str:
@@ -1528,7 +2365,11 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=None,
-        help="Optional directory for solver-style CSV/JSON/text output.",
+        help=(
+            "Optional directory for solver-style output. By default, only the normal "
+            "scenario is exported. Add --export-scenarios to also export no-risk and "
+            "no-cost comparison scenarios."
+        ),
     )
     parser.add_argument(
         "--region",
@@ -1566,6 +2407,19 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional manual energy price override, e.g. 0.35 for Berlin solver comparison.",
     )
+    parser.add_argument(
+        "--no-map",
+        action="store_true",
+        help="Skip Folium HTML/GeoJSON map export and write only CSV/JSON/TXT outputs.",
+    )
+    parser.add_argument(
+        "--export-scenarios",
+        action="store_true",
+        help=(
+            "Also export no_risk_weight and no_cost_weight comparison scenarios. "
+            "Without this flag, --output-dir exports only normal."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1589,11 +2443,33 @@ def main() -> None:
         startup_seconds=startup_seconds,
         data_preparation_seconds=data_preparation_seconds,
     )
+    scenario_runs: Tuple[ScenarioRun, ...] = tuple()
     if args.output_dir is not None:
-        result = export_results(result, args.output_dir)
+        scenario_runs = export_scenario_results(
+            result,
+            adapter_result,
+            args.output_dir,
+            network_mode=args.network_mode,
+            startup_seconds=startup_seconds,
+            data_preparation_seconds=data_preparation_seconds,
+            export_map=not args.no_map,
+            include_comparison_scenarios=args.export_scenarios,
+        )
+        result = scenario_runs[0].result
     text = summarize(result)
     if args.output_dir is not None:
-        text += f"\n\nExported results to: {args.output_dir}"
+        text += f"\n\nExported scenario results to: {args.output_dir}"
+        if args.no_map:
+            text += "\nMap export skipped (--no-map)."
+        for scenario_run in scenario_runs:
+            text += (
+                f"\n- {scenario_run.name}: "
+                f"risk_weight={scenario_run.result.risk_weight:.2f}, "
+                f"cost_weight={scenario_run.result.cost_weight:.2f}, "
+                f"total_risk={scenario_run.result.total_risk:.4f}, "
+                f"total_cost={scenario_run.result.total_cost:.2f}, "
+                f"dir={scenario_run.output_dir}"
+            )
     output_encoding = sys.stdout.encoding or "utf-8"
     safe_text = text.encode(output_encoding, errors="replace").decode(output_encoding)
     print(safe_text)
