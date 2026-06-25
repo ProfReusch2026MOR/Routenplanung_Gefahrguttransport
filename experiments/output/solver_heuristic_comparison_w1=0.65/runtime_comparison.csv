@@ -1,0 +1,11 @@
+stage,solver_seconds,heuristic_seconds
+data_preparation,168.775,2.9833
+network_preparation,130.937,2.2658
+mapping,,3.242
+model_build,34.318,
+solver_runtime,211.107,
+candidate_generation,,0.9321
+vehicle_assignment,,0.0002
+result_processing_or_export,0.319,7.988
+core_runtime,245.426,14.1331
+total_runtime,545.456,25.9951

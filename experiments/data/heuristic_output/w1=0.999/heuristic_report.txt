@@ -1,0 +1,76 @@
+HEURISTIK-ERGEBNIS
+=====================================================================================
+
+LIEFERUNG delivery_1 | Gefahrgutklasse: 3 | Gewicht: 10000 kg
+-------------------------------------------------------------------------------------
+Status:               Feasible
+Ziel:                 Berlin Kreuzberg
+Fahrzeug:             MAN_eTGX
+Kandidat:             distance
+Route (204 Kanten): 1827996421 -> 12914264739 -> 6795935365 -> 21487210 -> 1865536623 -> 29221504 -> ... -> 8567314893 -> 1795182927 -> 10678429936 -> 10243398750 -> 10678429929 -> 10882954118
+Gesamtdistanz:        3.17 km
+Variable Kosten:      2.81 EUR
+Fixkosten je Fahrt:   180.00 EUR
+Kumuliertes Risiko:   12.725230
+
+LIEFERUNG delivery_2 | Gefahrgutklasse: 2 | Gewicht: 8000 kg
+-------------------------------------------------------------------------------------
+Status:               Feasible
+Ziel:                 Berlin Charlottenburg
+Fahrzeug:             MAN_eTGX
+Kandidat:             risk
+Route (659 Kanten): 1827996421 -> 12914264739 -> 6795935365 -> 21487210 -> 1865536623 -> 29221504 -> ... -> 10004990329 -> 13047915202 -> 10004990340 -> 26784940 -> 10004990341 -> 13047905398
+Gesamtdistanz:        11.92 km
+Variable Kosten:      10.57 EUR
+Fixkosten je Fahrt:   180.00 EUR
+Kumuliertes Risiko:   19.287802
+
+LIEFERUNG delivery_3 | Gefahrgutklasse: 8 | Gewicht: 5000 kg
+-------------------------------------------------------------------------------------
+Status:               Feasible
+Ziel:                 Berlin Pankow
+Fahrzeug:             MAN_eTGX
+Kandidat:             risk
+Route (471 Kanten): 1827996421 -> 12914264739 -> 6795935365 -> 21487210 -> 1865536623 -> 29221504 -> ... -> 7125165438 -> 1821788428 -> 3135890104 -> 588159325 -> 4470477068 -> 30429541
+Gesamtdistanz:        8.69 km
+Variable Kosten:      7.70 EUR
+Fixkosten je Fahrt:   180.00 EUR
+Kumuliertes Risiko:   15.933977
+
+GESAMTSYSTEM
+=====================================================================================
+Region:                 berlin
+Netzwerkmodus:          solver_cropped
+Strompreis:             0.35 EUR/kWh (manual_override)
+Zulaessige Lieferungen: 3/3
+Eingesetzte Fahrzeugtypen: 1
+Namen:                  MAN_eTGX
+Gesamte Fixkosten:       540.00 EUR
+Gesamte var. Kosten:     21.07 EUR
+TOTALE KOSTEN:           561.07 EUR
+TOTALES RISIKO:          47.947010
+=====================================================================================
+
+ZUSAMMENFASSUNG: ZUWEISUNG UND KOSTEN
+-------------------------------------------------------------------------------------
+| Lieferung    | Fahrzeug                  | Fixkosten  | Var. Kosten | Risiko     |
+-------------------------------------------------------------------------------------
+| delivery_1   | MAN_eTGX                  | 180.00 EUR |    2.81 EUR |  12.725230 |
+| delivery_2   | MAN_eTGX                  | 180.00 EUR |   10.57 EUR |  19.287802 |
+| delivery_3   | MAN_eTGX                  | 180.00 EUR |    7.70 EUR |  15.933977 |
+-------------------------------------------------------------------------------------
+
+LAUFZEIT-ZUSAMMENFASSUNG
+============================================================
+Python-Start/Imports: 0.000s
+Datenvorbereitung:    3.175s
+Netzwerkvorbereitung: 2.558s
+Mapping:              3.333s
+Pfadgenerierung:      1.076s
+Fahrzeugzuweisung:    0.000s
+Ergebnisverarbeitung: 0.015s
+------------------------------
+Heuristik-Kernlaufzeit: 1.076s
+Heuristiklaufzeit:      14.883s
+Heuristik-Gesamtlaufzeit:18.073s
+============================================================

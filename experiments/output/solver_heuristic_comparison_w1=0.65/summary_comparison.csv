@@ -1,0 +1,9 @@
+metric,unit,solver,heuristic,heuristic_minus_solver,difference_pct_vs_solver
+feasible_deliveries,count,3.0,3.0,0.0,0.0
+selected_total_length_km,km,20.352,23.7813,3.4293,16.85
+total_risk,risk score,54.568,47.947,-6.621,-12.133
+total_variable_cost,EUR,18.0319,21.0702,3.0383,16.85
+total_fixed_cost,EUR,540.0,540.0,0.0,0.0
+total_cost,EUR,558.0319,561.0702,3.0383,0.544
+core_runtime,seconds,245.426,14.1331,-231.2929,-94.241
+total_runtime,seconds,545.456,25.9951,-519.4609,-95.234
