@@ -1,75 +1,139 @@
-# Hazardous Materials Vehicle Routing Optimization (HMVRP)
+# Hazardous Materials Vehicle Routing Problem (HMVRP)
 
-Dieses Projekt befasst sich mit der mathematischen Modellierung und algorithmischen Lösung eines Tourenplanungsproblems für Gefahrguttransporte. Ziel ist es, Lieferrouten so zu optimieren, dass das Gesamtrisiko für Bevölkerung und Infrastruktur minimiert wird, während gleichzeitig wirtschaftliche Transportkosten und Logistikrestriktionen eingehalten werden.
+## Projektmitglieder
 
-## 📋 Projektübersicht
-
-In diesem Operations Research (OR) Projekt wird ein reales, multikriterielles Entscheidungsproblem für Logistikplaner gelöst: Welches Fahrzeug übernimmt welche Gefahrgutlieferung auf welcher Route? Das Problem wird als **Hazardous Materials Vehicle Routing Problem (HMVRP)** bzw. als *Multi-Objective Network Flow Problem* modelliert, um Sicherheit und Wirtschaftlichkeit mathematisch auszubalancieren.
-
-### 🎯 Kernfokus & Optimierungsziele
-* **Risikominimierung (Primärziel):** Reduzierung des Gesamtrisikos entlang der Route basierend auf Bevölkerungsdichte, Unfallwahrscheinlichkeiten und der Nähe zu kritischer Infrastruktur.
-* **Kostenoptimierung (Sekundärziel):** Begrenzung der wirtschaftlichen Faktoren wie Distanz, Fahrzeit und Mautgebühren.
-
-### ⚙️ Restriktionen & Rahmenbedingungen
-* **Behördliche Einschränkungen:** Striktes Routing im Straßennetz unter Ausschluss von Gefahrgutverbotszonen, dichten Innenstädten, Wohngebieten und gesperrten Tunneln.
-* **Kapazitäts- & Logistikrestriktionen:** Einhaltung von Fahrzeugkapazitäten, der begrenzten Fahrzeuganzahl sowie der lückenlosen Transportpflicht für jede Lieferung.
-* **Netzwerklogistik:** Mathematische Abbildung über einen gerichteten Graphen
+- Luca Siewecke (lucasiewecke)
+- Timo Schöddert (timoschoeddert247)
+- Maher Darweesh (maherd18)
+- Jonas Beckmann (jbeckmann784)
+- Fuqiang Zhang (viikly)
 
 ---
 
-## 🗂 Inhaltsverzeichnis der Projektdokumentation
+## Projektbeschreibung
 
-Die begleitende Projektdokumentation (PDF/Notebook) ist wie folgt gegliedert:
+Dieses Projekt befasst sich mit der mathematischen Modellierung und algorithmischen Lösung eines Tourenplanungsproblems für Gefahrguttransporte.
 
-### 1. Einleitung
-* **1.1 Motivation:** Der Konflikt zwischen ökonomischer Effizienz und nachhaltiger Logistik.
-* **1.2 Problemstellung und Forschungsfrage:** Das Green Vehicle Routing Problem mit Zeitfenstern (GVRP-TW) und heterogener Flotte sowie die zentrale Fragestellung zur optimalen Routen- und Fahrzeugwahl.
-* **1.3 Zielsetzung und Aufbau der Arbeit:** Minimierung der Gesamtauswirkungen und Struktur der restlichen Kapitel.
+Ziel ist es, Lieferungen auf zulässigen Routen so zu planen, dass das Gesamtrisiko für Bevölkerung und Infrastruktur minimiert wird, während wirtschaftliche Transportkosten und logistische Restriktionen eingehalten werden.
 
-### 2. Literaturübersicht und OR-Kontext
-* **2.1 Einordnung in die OR-Problemklasse:** Vom klassischen VRP zum Green VRP.
-* **2.2 Aktueller Stand der Forschung:** Akademischer Stand der Technik und Emissionsmodelle (Einfluss von Last, Geschwindigkeit und Straßentyp).
-* **2.3 Mathematische Modellierungsansätze:** Exakte Lösungsverfahren in der Literatur und Abgrenzung der eigenen Arbeit.
-* **2.4 Heuristische Lösungsansätze:** Metaheuristiken im Kontext des GVRP.
-
-### 3. Datenmodell und Datenquellen
-* **3.1 Beschreibung des Szenarios:** Praxisnaher Anwendungsfall (urbane Logistik).
-* **3.2 Eingabedaten und Netzwerkparameter:** Kundendaten, Zeitfenster, Distanz- und Geschwindigkeitsmatrizen.
-* **3.3 Fahrzeugsparameter:** Spezifikation der heterogenen Flotte, Fahrzeugtypen und Kapazitäten.
-* **3.4 Emissionsberechnung:** Integration von Emissionsfaktoren, Straßentypen und Beladungszuständen.
-* **3.5 Datenvalidierung:** Plausibilitätsprüfungen der Eingabewerte.
-* **3.6 Instanz-Generierung:** Erstellung von Small, Medium und Large Instances.
-
-### 4. Mathematische Modellierung
-* **4.1 Systemgrenzen:** Annahmen und Vereinfachungen.
-* **4.2 Notation: Mengen, Parameter und Entscheidungsvariablen:** Mathematische Formalisierung des Problems.
-* **4.3 Zielfunktion:** Internalisierung von Emissionskosten vs. Distanzminimierung.
-* **4.4 Nebenbedingungen:** Routing, Kapazitäten, Zeitfenster und Lastflüsse.
-
-### 5. Implementierung der Lösungsverfahren
-* **5.1 Exakter Lösungsansatz**
-    * **5.1.1 Solver-Wahl:** Begründung für den Einsatz von [z.B. Gurobi / CPLEX / CBC].
-    * **5.1.2 Modell-Mapping:** Umsetzung des MILP in Python (Pyomo/Gurobipy).
-    * **5.1.3 Konfiguration:** Solver-Parameter und Time-Limits.
-* **5.2 Heuristischer Lösungsansatz**
-    * **5.2.1 Heuristik-Design:** Beschreibung der algorithmischen Logik (z.B. Savings-Algorithmus oder ALNS).
-    * **5.2.2 Berücksichtigung umweltspezifischer Faktoren:** „Grüne“ Anpassungen und Einbindung der Emissionsfaktoren in die Heuristik.
-    * **5.2.3 Implementierung:** Python-Code und Validierung der Zulässigkeit.
-
-### 6. Numerische Experimente und Ergebnisse
-* **6.1 Solver Stresstest:** Versuchsaufbau (Hardware/Testumgebung) und Performance-Analyse über Small, Medium und Large Instances samt Solver-Gaps (Rechenzeit/Güte).
-* **6.2 Methodenvergleich: Exakter vs. heuristischer Lösungsansatz:** Methodischer Vergleich von Rechenzeit vs. Lösungsqualität.
-* **6.3 Analyse der Trade-offs:** Szenarienanalyse zur Sensitivität bei Laständerungen und Diskussion der Pareto-Effizienz zwischen Kosten und CO2-Ausstoß.
-
-### 7. Fazit und Ausblick
-* **7.1 Zusammenfassung der Ergebnisse:** Beantwortung der Forschungsfrage und Eignung der Methoden für den Praxiseinsatz.
-* **7.2 Kritische Würdigung und Limitationen des Modells:** Modellgrenzen bezüglich Stochastik und dynamischen Faktoren.
-* **7.3 Ausblick und Handlungsempfehlung für die Praxis:** Strategien für Logistikentscheider und Erweiterungspotenzial (z. B. Integration von Ladestationen für E-Fahrzeuge).
+Im Mittelpunkt steht ein Operations-Research-Ansatz für das Hazardous Materials Vehicle Routing Problem (HMVRP) mit realen und realitätsnahen Daten.
 
 ---
 
+## Kern-Entscheidungsfrage
 
-## 🛠 Technologien & Installation
+Welche Fahrzeuge bedienen welche Gefahrgutlieferungen auf welchen zulässigen Routen so, dass das Gesamtrisiko minimiert und wirtschaftliche Transportkosten unter allen Logistikrestriktionen eingehalten werden?
 
-- **Bibliotheken:** `pandas`, `numpy`, `matplotlib`, `scipy`
+---
+
+## Ziele des Projekts
+
+- Entwicklung eines belastbaren HMVRP-Modells zur Risikominimierung unter wirtschaftlichen und logistischen Restriktionen
+- Aufbau einer sauberen Datenbasis mit reproduzierbaren Instanzen (Small, Medium, Large)
+- Umsetzung und Vergleich eines exakten Solver-Ansatzes und einer Heuristik hinsichtlich Laufzeit, Lösbarkeit und Lösungsqualität
+- Durchführung nachvollziehbarer Experimente als Grundlage für belastbare Entscheidungsunterstützung
+
+---
+
+## Projektstruktur und zentrale Dateien
+
+Die Projektstruktur ist entlang der Kernbereiche Daten, Modellierung, Heuristik und Experimente aufgebaut.
+
+### Root-Ebene
+
+- `README.md`: Zentrale Projektübersicht mit Zielbild, Rollen, Status und Literatur
+- `review_meeting_progress.md`: Laufender Projektstatus, Aufgabenverteilung, Risiken und To-dos
+- `requirements.current-venv.txt`: Python-Abhängigkeiten der aktiven Entwicklungsumgebung
+
+### `data/`
+
+- `data/raw/`: Rohdaten und Vorverarbeitung (u. a. Notebooks zur Datenerzeugung/-bereinigung)
+- `data/processed/`: Modellnahe, aufbereitete Datensätze
+- `data/germany_data/edges_germnay_geo_optimized.csv`: Kanten-/Netzwerkdaten für Routing
+- `data/raw/vehicles.py`: Datenbasis/Logik für Fahrzeugparameter
+
+### `models/`
+
+- `models/math_model/Math_Model_Hazmat_CVRP-MT.ipynb`: Mathematische Modellierung
+- `models/Gefahrgut_Routenplanung_MILP-pulp.mps`: Exportiertes MILP-Modell
+- `models/Gefahrgut_Routenplanung_MILP-pulp.sol`: Beispielhafte Solver-Lösung
+
+### `heuristics/`
+
+- `heuristics/real_data_path_heuristic.py`: Heuristischer Pfadansatz auf realen Daten
+- `heuristics/real_data_adapter.py`: Adapter zwischen Daten und Heuristik
+- `heuristics/risk_cost_path_heuristic_toy.py`: Vereinfachter Risiko-Kosten-Ansatz (Toy)
+- `heuristics/test_real_data_path_heuristic.py`: Tests für zentrale Heuristikkomponenten
+- `heuristics/heuristic_design.md`: Designnotizen zur Heuristik
+
+### `experiments/`
+
+- `experiments/`: Experimentcode und Auswertungsskripte (laufender Aufbau)
+
+### `literature/`
+
+- `literature/literature_summary.md`: Strukturierte Zusammenfassung der relevanten Fachliteratur
+
+---
+
+## Rollen und Aufgabenverteilung
+
+### Luca - Projektkoordination, Präsentation, GitHub-Management
+
+- Repository-Struktur und Dokumentation pflegen
+- README, Projektstatus und Meeting-Dokumentation aktualisieren
+- GitHub-Issues planen und verfolgen
+- Pull Requests reviewen und Integration steuern
+- Unterstützung bei Solver-Implementierung
+
+### Timo - Datenmodell und Datengenerierung
+
+- Datenmodell für Knoten, Kanten, Lieferungen, Fahrzeuge und Risikofaktoren definieren
+- Datenquellen recherchieren und Annahmen strukturieren
+- Instanzen in Small, Medium, Large erzeugen
+- Plausibilitätschecks für Vollständigkeit und Konsistenz aufsetzen
+- Reproduzierbare Eingabedaten für Tests bereitstellen
+
+### Maher - Mathematisches Modell
+
+- Mengen, Parameter und Entscheidungsvariablen formal definieren
+- Zielfunktion mit Risiko (primär) und Kosten (sekundär) formulieren
+- Nebenbedingungen für Routing, Kapazität, Fluss und Zulässigkeit modellieren
+- Annahmen, Systemgrenzen und Notation dokumentieren
+- Abstimmung mit Datenstruktur und Solver-Mapping
+
+### Jonas - Solver-Implementierung
+
+- Modell in Python umsetzen (z. B. Pyomo/Gurobi/OR-Tools/PuLP)
+- Exakten MILP/LP-Ansatz implementieren
+- Solver-Parameter, Time-Limits und Laufprotokolle konfigurieren
+- Kleine Instanzen als erste Validierung lösen
+- Runtime, Gap und Lösungsqualität dokumentieren
+
+### Fuqiang - Heuristik und Literatur
+
+- Literaturrecherche zu HMVRP-Risikomodellen
+- Strukturierte Literatursummary erstellen
+- Erste heuristische Verfahren entwickeln und implementieren
+- Bewertungslogik für Solver-vs-Heuristik definieren
+- Ergebnisse im Forschungskontext einordnen
+
+---
+
+## Aktuelle Literatur
+
+- Erkut, E. & Verter, V. (1998): Risk modeling for hazardous-material transport
+- Holeczek, N. (2019): Classification and literature review of hazardous-material truck transportation
+- Zografos, K. G. & Androutsopoulos, K. N. (2004): Heuristic algorithm for hazardous-material distribution problems
+- Androutsopoulos, K. N. & Zografos, K. G. (2012): Bi-objective time-dependent routing and scheduling for hazardous-material distribution
+- Bula, G. A. et al. (2016): MILP model for hazardous-material vehicle routing
+- Bula, G. A. et al. (2017): Variable Neighborhood Search for hazardous-material vehicle routing
+- Cuneo, D. et al. (2018): Risk-based multi-objective vehicle routing in fuel logistics
+
+---
+
+## Hinweise zur technischen Umgebung
+
+- Empfohlen: Python-Umgebung mit den in `requirements.current-venv.txt` hinterlegten Paketen
+- Bestehende Modell- und Heuristikdateien sind als Ausgangspunkt für die nächsten Iterationen vorbereitet
 
