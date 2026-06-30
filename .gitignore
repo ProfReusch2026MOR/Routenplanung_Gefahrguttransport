@@ -48,3 +48,8 @@ pip-log.txt
 # OS files
 .DS_Store
 Thumbs.db
+
+
+.venv*/
+*.pkl
+requirements.current-venv.txt
