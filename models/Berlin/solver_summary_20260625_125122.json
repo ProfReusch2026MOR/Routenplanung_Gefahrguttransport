@@ -1,0 +1,61 @@
+{
+  "meta": {
+    "timestamp": "20260625_125122",
+    "solver": "CBC",
+    "time_limit_s": 300,
+    "network_mode": "contracted_graph",
+    "strompreis_eur_kwh": 0.35
+  },
+  "weights": {
+    "w1_risk": 0.35,
+    "w2_cost": 0.65,
+    "alpha_pop": 0.4,
+    "beta_acc": 0.4,
+    "gamma_nat": 0.2
+  },
+  "solver_status": {
+    "status": "Optimal",
+    "objective_value": 0.010145830423581883
+  },
+  "network": {
+    "nodes_raw": 294724,
+    "edges_raw": 533453,
+    "nodes_after_contraction": 219411,
+    "edges_after_contraction": 455344,
+    "solver_variables_f": 81525,
+    "solver_edges_per_delivery": {
+      "1": 17064,
+      "2": 39252,
+      "3": 25209
+    },
+    "solver_nodes_per_delivery": {
+      "1": 8309,
+      "2": 19143,
+      "3": 12204
+    },
+    "solver_total_unique_edges": 53566,
+    "solver_total_unique_nodes": 26063,
+    "variables": 200505,
+    "constraints": 282033,
+    "deliveries": 3,
+    "vehicle_types": 3
+  },
+  "timing_s": {
+    "data_preparation": 101.254,
+    "network_preparation": 87.791,
+    "model_build": 20.521,
+    "solver_runtime": 138.352,
+    "result_processing": 0.019,
+    "core_runtime": 158.873,
+    "total_runtime": 347.938
+  },
+  "results": {
+    "total_fixed_cost_eur": 540,
+    "total_variable_cost_eur": 17.3175,
+    "total_cost_eur": 557.3175,
+    "total_risk": 58.4934,
+    "vehicles_used": [
+      "MAN_eTGX"
+    ]
+  }
+}
