@@ -17,6 +17,14 @@ from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 DEPOT = "DEPOT"
 EPSILON = 1e-9
+VND_NEIGHBORHOOD_ORDER = (
+    "intra_trip_relocate",
+    "intra_trip_2opt",
+    "intra_trip_swap",
+    "inter_trip_relocate",
+    "inter_trip_swap",
+    "trip_reassignment",
+)
 
 
 @dataclass(frozen=True)
@@ -213,6 +221,28 @@ class HeuristicRun:
     status: str
     evaluation: SolutionEvaluation
     scales: ObjectiveScales
+    runtime_seconds: float
+
+
+@dataclass(frozen=True)
+class VNDMove:
+    neighborhood: str
+    description: str
+    objective_before: float
+    objective_after: float
+
+
+@dataclass(frozen=True)
+class VNDRun:
+    status: str
+    initial_evaluation: SolutionEvaluation
+    evaluation: SolutionEvaluation
+    scales: ObjectiveScales
+    accepted_moves: Tuple[VNDMove, ...]
+    evaluated_candidates: int
+    incomplete_candidates: int
+    incomplete_neighborhoods: Tuple[str, ...]
+    neighborhood_passes: int
     runtime_seconds: float
 
 
@@ -2742,6 +2772,364 @@ def construct_initial_solution(instance: ToyInstance) -> HeuristicRun:
     )
 
 
+def _schedule_key(
+    schedules: Mapping[str, Sequence[Sequence[str]]],
+) -> Tuple[Tuple[str, Tuple[Tuple[str, ...], ...]], ...]:
+    return tuple(
+        (
+            vehicle_id,
+            tuple(tuple(trip) for trip in schedules[vehicle_id]),
+        )
+        for vehicle_id in sorted(schedules)
+    )
+
+
+def _intra_trip_relocate_candidates(
+    schedules: Mapping[str, Sequence[Sequence[str]]],
+) -> Iterable[Tuple[str, Dict[str, List[List[str]]]]]:
+    for vehicle_id in sorted(schedules):
+        for trip_index, trip in enumerate(schedules[vehicle_id]):
+            for source_position, customer_id in enumerate(trip):
+                for target_position in range(len(trip)):
+                    if source_position == target_position:
+                        continue
+                    proposal = _copy_schedules(schedules)
+                    moved_customer = proposal[vehicle_id][trip_index].pop(
+                        source_position
+                    )
+                    proposal[vehicle_id][trip_index].insert(
+                        target_position,
+                        moved_customer,
+                    )
+                    description = (
+                        f"{vehicle_id} trip {trip_index + 1}: relocate "
+                        f"{customer_id} from {source_position + 1} "
+                        f"to {target_position + 1}"
+                    )
+                    yield description, proposal
+
+
+def _intra_trip_2opt_candidates(
+    schedules: Mapping[str, Sequence[Sequence[str]]],
+) -> Iterable[Tuple[str, Dict[str, List[List[str]]]]]:
+    for vehicle_id in sorted(schedules):
+        for trip_index, trip in enumerate(schedules[vehicle_id]):
+            for start_position in range(len(trip) - 1):
+                for end_position in range(start_position + 1, len(trip)):
+                    proposal = _copy_schedules(schedules)
+                    segment = proposal[vehicle_id][trip_index][
+                        start_position : end_position + 1
+                    ]
+                    proposal[vehicle_id][trip_index][
+                        start_position : end_position + 1
+                    ] = reversed(segment)
+                    description = (
+                        f"{vehicle_id} trip {trip_index + 1}: 2-opt "
+                        f"{start_position + 1}-{end_position + 1}"
+                    )
+                    yield description, proposal
+
+
+def _intra_trip_swap_candidates(
+    schedules: Mapping[str, Sequence[Sequence[str]]],
+) -> Iterable[Tuple[str, Dict[str, List[List[str]]]]]:
+    for vehicle_id in sorted(schedules):
+        for trip_index, trip in enumerate(schedules[vehicle_id]):
+            for left_position in range(len(trip) - 1):
+                for right_position in range(left_position + 1, len(trip)):
+                    proposal = _copy_schedules(schedules)
+                    proposal_trip = proposal[vehicle_id][trip_index]
+                    left_customer = proposal_trip[left_position]
+                    right_customer = proposal_trip[right_position]
+                    proposal_trip[left_position], proposal_trip[right_position] = (
+                        right_customer,
+                        left_customer,
+                    )
+                    description = (
+                        f"{vehicle_id} trip {trip_index + 1}: swap "
+                        f"{left_customer} and {right_customer}"
+                    )
+                    yield description, proposal
+
+
+def _trip_references(
+    schedules: Mapping[str, Sequence[Sequence[str]]],
+) -> Tuple[Tuple[str, int], ...]:
+    return tuple(
+        (vehicle_id, trip_index)
+        for vehicle_id in sorted(schedules)
+        for trip_index in range(len(schedules[vehicle_id]))
+    )
+
+
+def _inter_trip_relocate_candidates(
+    schedules: Mapping[str, Sequence[Sequence[str]]],
+) -> Iterable[Tuple[str, Dict[str, List[List[str]]]]]:
+    trip_references = _trip_references(schedules)
+    for source_vehicle_id, source_trip_index in trip_references:
+        source_trip = schedules[source_vehicle_id][source_trip_index]
+        for source_position, customer_id in enumerate(source_trip):
+            for target_vehicle_id, target_trip_index in trip_references:
+                if (
+                    source_vehicle_id == target_vehicle_id
+                    and source_trip_index == target_trip_index
+                ):
+                    continue
+                target_trip = schedules[target_vehicle_id][target_trip_index]
+                for target_position in range(len(target_trip) + 1):
+                    proposal = _copy_schedules(schedules)
+                    moved_customer = proposal[source_vehicle_id][
+                        source_trip_index
+                    ].pop(source_position)
+                    source_trip_removed = not proposal[source_vehicle_id][
+                        source_trip_index
+                    ]
+                    if source_trip_removed:
+                        proposal[source_vehicle_id].pop(source_trip_index)
+
+                    adjusted_target_trip_index = target_trip_index
+                    if (
+                        source_vehicle_id == target_vehicle_id
+                        and source_trip_removed
+                        and target_trip_index > source_trip_index
+                    ):
+                        adjusted_target_trip_index -= 1
+                    proposal[target_vehicle_id][
+                        adjusted_target_trip_index
+                    ].insert(target_position, moved_customer)
+                    description = (
+                        f"relocate {customer_id} from "
+                        f"{source_vehicle_id} trip {source_trip_index + 1} "
+                        f"to {target_vehicle_id} trip "
+                        f"{target_trip_index + 1} position "
+                        f"{target_position + 1}"
+                    )
+                    yield description, proposal
+
+
+def _inter_trip_swap_candidates(
+    schedules: Mapping[str, Sequence[Sequence[str]]],
+) -> Iterable[Tuple[str, Dict[str, List[List[str]]]]]:
+    trip_references = _trip_references(schedules)
+    for left_index, (
+        left_vehicle_id,
+        left_trip_index,
+    ) in enumerate(trip_references[:-1]):
+        left_trip = schedules[left_vehicle_id][left_trip_index]
+        for right_vehicle_id, right_trip_index in trip_references[
+            left_index + 1 :
+        ]:
+            right_trip = schedules[right_vehicle_id][right_trip_index]
+            for left_position, left_customer in enumerate(left_trip):
+                for right_position, right_customer in enumerate(right_trip):
+                    proposal = _copy_schedules(schedules)
+                    proposal[left_vehicle_id][left_trip_index][
+                        left_position
+                    ] = right_customer
+                    proposal[right_vehicle_id][right_trip_index][
+                        right_position
+                    ] = left_customer
+                    description = (
+                        f"swap {left_customer} in {left_vehicle_id} trip "
+                        f"{left_trip_index + 1} with {right_customer} in "
+                        f"{right_vehicle_id} trip {right_trip_index + 1}"
+                    )
+                    yield description, proposal
+
+
+def _trip_reassignment_candidates(
+    schedules: Mapping[str, Sequence[Sequence[str]]],
+) -> Iterable[Tuple[str, Dict[str, List[List[str]]]]]:
+    for source_vehicle_id in sorted(schedules):
+        for source_trip_index, trip in enumerate(
+            schedules[source_vehicle_id]
+        ):
+            for target_vehicle_id in sorted(schedules):
+                if source_vehicle_id == target_vehicle_id:
+                    continue
+                for target_trip_index in range(
+                    len(schedules[target_vehicle_id]) + 1
+                ):
+                    proposal = _copy_schedules(schedules)
+                    moved_trip = proposal[source_vehicle_id].pop(
+                        source_trip_index
+                    )
+                    proposal[target_vehicle_id].insert(
+                        target_trip_index,
+                        moved_trip,
+                    )
+                    description = (
+                        f"reassign trip {source_trip_index + 1} "
+                        f"({', '.join(trip)}) from {source_vehicle_id} "
+                        f"to {target_vehicle_id} position "
+                        f"{target_trip_index + 1}"
+                    )
+                    yield description, proposal
+
+
+def _vnd_neighborhood_candidates(
+    neighborhood: str,
+    schedules: Mapping[str, Sequence[Sequence[str]]],
+) -> Iterable[Tuple[str, Dict[str, List[List[str]]]]]:
+    if neighborhood == "intra_trip_relocate":
+        yield from _intra_trip_relocate_candidates(schedules)
+    elif neighborhood == "intra_trip_2opt":
+        yield from _intra_trip_2opt_candidates(schedules)
+    elif neighborhood == "intra_trip_swap":
+        yield from _intra_trip_swap_candidates(schedules)
+    elif neighborhood == "inter_trip_relocate":
+        yield from _inter_trip_relocate_candidates(schedules)
+    elif neighborhood == "inter_trip_swap":
+        yield from _inter_trip_swap_candidates(schedules)
+    elif neighborhood == "trip_reassignment":
+        yield from _trip_reassignment_candidates(schedules)
+    else:
+        raise ValueError(f"Unknown VND neighborhood: {neighborhood}.")
+
+
+def _vnd_candidate_key(
+    evaluation: SolutionEvaluation,
+    description: str,
+) -> Tuple[object, ...]:
+    return (
+        evaluation.objective,
+        evaluation.total_risk,
+        evaluation.total_cost,
+        evaluation.total_time_minutes,
+        _schedule_key(evaluation.schedules),
+        description,
+    )
+
+
+def improve_solution_vnd(
+    instance: ToyInstance,
+    initial_run: HeuristicRun,
+    *,
+    max_neighborhood_passes: int = 1_000,
+) -> VNDRun:
+    """Improve a complete construction solution with deterministic VND."""
+    if (
+        isinstance(max_neighborhood_passes, bool)
+        or not isinstance(max_neighborhood_passes, Integral)
+        or max_neighborhood_passes <= 0
+    ):
+        raise ValueError(
+            "max_neighborhood_passes must be a positive integer."
+        )
+
+    start = time.perf_counter()
+    initial_evaluation = initial_run.evaluation
+    if (
+        initial_run.status != "feasible"
+        or not initial_evaluation.feasible
+        or initial_evaluation.unserved_customers
+    ):
+        return VNDRun(
+            status="initial_solution_infeasible",
+            initial_evaluation=initial_evaluation,
+            evaluation=initial_evaluation,
+            scales=initial_run.scales,
+            accepted_moves=tuple(),
+            evaluated_candidates=0,
+            incomplete_candidates=0,
+            incomplete_neighborhoods=tuple(),
+            neighborhood_passes=0,
+            runtime_seconds=time.perf_counter() - start,
+        )
+
+    current_evaluation = initial_evaluation
+    accepted_moves: List[VNDMove] = []
+    evaluated_candidates = 0
+    incomplete_candidates = 0
+    incomplete_neighborhoods = set()
+    neighborhood_passes = 0
+    neighborhood_index = 0
+    status = "locally_optimal"
+
+    while neighborhood_index < len(VND_NEIGHBORHOOD_ORDER):
+        if neighborhood_passes >= max_neighborhood_passes:
+            status = "iteration_limit_reached"
+            break
+
+        neighborhood = VND_NEIGHBORHOOD_ORDER[neighborhood_index]
+        neighborhood_passes += 1
+        current_key = _schedule_key(current_evaluation.schedules)
+        seen_schedules = set()
+        best_candidate = None
+
+        for description, proposal in _vnd_neighborhood_candidates(
+            neighborhood,
+            current_evaluation.schedules,
+        ):
+            proposal_key = _schedule_key(proposal)
+            if proposal_key == current_key or proposal_key in seen_schedules:
+                continue
+            seen_schedules.add(proposal_key)
+            candidate_evaluation = evaluate_solution(
+                instance,
+                proposal,
+                initial_run.scales,
+                require_all_customers=True,
+            )
+            evaluated_candidates += 1
+            if not candidate_evaluation.feasible:
+                if _search_limit_reached(candidate_evaluation.reasons):
+                    incomplete_candidates += 1
+                    incomplete_neighborhoods.add(neighborhood)
+                continue
+            if (
+                candidate_evaluation.objective
+                >= current_evaluation.objective - EPSILON
+            ):
+                continue
+
+            candidate = (
+                _vnd_candidate_key(candidate_evaluation, description),
+                description,
+                candidate_evaluation,
+            )
+            if best_candidate is None or candidate[0] < best_candidate[0]:
+                best_candidate = candidate
+
+        if best_candidate is None:
+            neighborhood_index += 1
+            continue
+
+        _, description, improved_evaluation = best_candidate
+        accepted_moves.append(
+            VNDMove(
+                neighborhood=neighborhood,
+                description=description,
+                objective_before=current_evaluation.objective,
+                objective_after=improved_evaluation.objective,
+            )
+        )
+        current_evaluation = improved_evaluation
+        incomplete_candidates = 0
+        incomplete_neighborhoods.clear()
+        neighborhood_index = 0
+
+    if status == "locally_optimal" and incomplete_candidates:
+        status = "search_limit_reached"
+
+    return VNDRun(
+        status=status,
+        initial_evaluation=initial_evaluation,
+        evaluation=current_evaluation,
+        scales=initial_run.scales,
+        accepted_moves=tuple(accepted_moves),
+        evaluated_candidates=evaluated_candidates,
+        incomplete_candidates=incomplete_candidates,
+        incomplete_neighborhoods=tuple(
+            neighborhood
+            for neighborhood in VND_NEIGHBORHOOD_ORDER
+            if neighborhood in incomplete_neighborhoods
+        ),
+        neighborhood_passes=neighborhood_passes,
+        runtime_seconds=time.perf_counter() - start,
+    )
+
+
 def solver_warm_start_routes(
     evaluation: SolutionEvaluation,
 ) -> Dict[str, Tuple[Tuple[str, ...], ...]]:
@@ -2829,11 +3217,53 @@ def summarize_run(run: HeuristicRun) -> str:
     return "\n".join(lines)
 
 
+def summarize_vnd_run(run: VNDRun) -> str:
+    """Summarize improvement quality and VND search effort."""
+    improvement = (
+        run.initial_evaluation.objective - run.evaluation.objective
+    )
+    lines = [
+        "Variable Neighborhood Descent",
+        "-" * 31,
+        f"status={run.status}",
+        f"initial_objective={run.initial_evaluation.objective:.6f}",
+        f"final_objective={run.evaluation.objective:.6f}",
+        f"objective_improvement={improvement:.6f}",
+        f"accepted_moves={len(run.accepted_moves)}",
+        f"evaluated_candidates={run.evaluated_candidates}",
+        f"incomplete_candidates={run.incomplete_candidates}",
+        (
+            "incomplete_neighborhoods="
+            + (
+                ",".join(run.incomplete_neighborhoods)
+                if run.incomplete_neighborhoods
+                else "none"
+            )
+        ),
+        f"neighborhood_passes={run.neighborhood_passes}",
+        f"runtime_seconds={run.runtime_seconds:.6f}",
+    ]
+    for move_index, move in enumerate(run.accepted_moves, start=1):
+        lines.append(
+            f"move_{move_index}={move.neighborhood}: "
+            f"{move.description} "
+            f"({move.objective_before:.6f} -> "
+            f"{move.objective_after:.6f})"
+        )
+    return "\n".join(lines)
+
+
 def main() -> None:
     instance = build_toy_instance()
-    run = construct_initial_solution(instance)
-    print(summarize_run(run))
-    heuristic_routes = build_heuristic_routes(instance, run.evaluation)
+    construction_run = construct_initial_solution(instance)
+    vnd_run = improve_solution_vnd(instance, construction_run)
+    print(summarize_run(construction_run))
+    print()
+    print(summarize_vnd_run(vnd_run))
+    heuristic_routes = build_heuristic_routes(
+        instance,
+        vnd_run.evaluation,
+    )
     print()
     print("heuristic_routes = " + pformat(heuristic_routes, sort_dicts=False))
 

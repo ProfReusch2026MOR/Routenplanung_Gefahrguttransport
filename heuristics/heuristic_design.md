@@ -694,9 +694,9 @@ stop_duration =
 
 The first version therefore allows charging and a driver break to overlap. Customer service, loading, and reloading do not overlap with a driver break.
 
-## 9. Variable Neighborhood Search
+## 9. Variable Neighborhood Descent and Search
 
-The construction phase provides a feasible solution. VNS then applies controlled changes:
+The construction phase provides a feasible solution. The implemented toy milestone first applies deterministic best-improvement VND. VNS shaking remains the next improvement stage.
 
 ### Relocate
 
@@ -724,35 +724,47 @@ Insert, remove, or replace a charging station.
 
 Every move is evaluated by the same feasibility and objective functions used during construction.
 
-### Reproducible VNS Configuration
+The toy schedule explicitly stores customer sequences and trips. It therefore implements six schedule neighborhoods. A path change is not yet a separate move because the toy has one leg per OD pair. Charging choices are rebuilt automatically by the schedule evaluator for every candidate, so charging alternatives are already reconsidered without storing a charging stop in the move itself. Explicit path and charging-stop neighborhoods become useful when the real-data representation exposes several alternatives.
 
-The first implementation uses:
+Inter-trip relocate inserts a customer only into an existing trip. It does not create a new single-customer trip or activate an unused vehicle. The current toy can activate an unused vehicle only by reassigning a complete trip. This restricted neighborhood keeps the first VND small but can exclude improvements that require splitting a trip.
+
+### Reproducible VND Configuration
+
+The implemented VND uses:
 
 ```text
-random_seed = 42
 acceptance = strict improvement greater than 1e-9
 local_search = best-improvement VND
 equal_solution_acceptance = false
-max_vns_iterations = 1000
-max_vns_seconds = 60
+max_neighborhood_passes = 1000
 ```
 
 The fixed VND neighborhood order is:
 
 ```text
-1. path change
-2. intra-trip relocate
-3. intra-trip 2-opt
-4. intra-trip swap
-5. inter-trip relocate
-6. inter-trip swap
-7. trip reassignment
-8. charging-stop change
+1. intra-trip relocate
+2. intra-trip 2-opt
+3. intra-trip swap
+4. inter-trip relocate
+5. inter-trip swap
+6. trip reassignment
 ```
 
-After an improving move, VND restarts at neighborhood 1. Shaking applies one random move from the current neighborhood. An infeasible shaken solution receives one charging-and-schedule repair attempt and is discarded if it remains infeasible.
+Each neighborhood evaluates all unique candidate schedules and selects its deterministic best strict improvement. Ties are resolved by objective, risk, cost, time, complete schedule, and move description. After an improving move, VND restarts at neighborhood 1.
 
-The search stops when a complete neighborhood cycle finds no improvement, the iteration limit is reached, or the time limit is reached.
+VND stops when a complete neighborhood cycle finds no improvement or the neighborhood-pass limit is reached. A candidate rejected with `charging_search_incomplete` is not treated as proven infeasible. If a complete cycle contains such a candidate and accepts no later improvement, the final status is `search_limit_reached`, while the feasible incumbent is retained. Accepting a move clears incomplete-search evidence from the previous cycle because the incumbent and its neighborhoods have changed.
+
+The result reports the initial and final objective, accepted moves, evaluated candidate count, unresolved incomplete candidate count and neighborhoods, neighborhood passes, and runtime.
+
+### Future VNS Shaking
+
+The later VNS stage applies one random move from the current neighborhood. An infeasible shaken solution receives one charging-and-schedule repair attempt and is discarded if it remains infeasible. The planned configuration is:
+
+```text
+random_seed = 42
+max_vns_iterations = 1000
+max_vns_seconds = 60
+```
 
 Seed 42 is used for deterministic debugging and the standard demonstration. Final stochastic experiments use at least:
 
@@ -846,6 +858,11 @@ served_and_unserved_customers
 normalization_and_risk_metadata
 runtime_breakdown
 charging_branch_evaluations
+vnd_initial_and_final_objective
+vnd_accepted_moves
+vnd_evaluated_candidates
+vnd_incomplete_candidates_and_neighborhoods
+vnd_neighborhood_passes
 ```
 
 ### Selected Trips and Stops
@@ -1006,7 +1023,22 @@ Construct:
         append it to the selected vehicle
         update vehicle availability and daily resource use
 
-Improve with VNS:
+Improve with VND:
+    current_solution = constructed solution
+    neighborhood = first schedule neighborhood
+
+    while a neighborhood remains and the pass limit is not reached:
+        generate all unique schedules in the current neighborhood
+        evaluate each schedule with the shared feasibility function
+        keep the deterministic best strict improvement
+
+        if an improvement exists:
+            accept it
+            restart at the first neighborhood
+        else:
+            continue with the next neighborhood
+
+Improve with VNS later:
     repeat until stopping condition:
         shake with the current neighborhood
         repair paths, charging, and schedule
@@ -1022,18 +1054,13 @@ Validate and export:
 
 ## 14. Implementation Order
 
-This document describes the target algorithm. The current Python implementation remains the independent-OD baseline until the following steps are completed:
+The multi-customer toy now covers data structures, shared schedule evaluation, sequential insertion, multi-trip reuse, charging repair, and deterministic VND. The remaining implementation order is:
 
-1. build a multi-customer toy instance with one depot, two goods, and physical vehicles;
-2. implement trip, stop, vehicle-state, and path-alternative data structures;
-3. implement one shared schedule and resource evaluator;
-4. implement sequential insertion and depot-to-depot trip closure;
-5. allow multi-trip vehicle reuse;
-6. add charging repair;
-7. add VNS neighborhoods and focused tests;
-8. connect the existing Berlin road-path layer;
-9. connect Germany data only after Small and Medium instances are reproducible;
-10. compare with a solver that implements the same multi-customer model.
+1. add reproducible VNS shaking around the implemented VND;
+2. expose explicit path and charging-stop moves when the real-data representation supports alternatives;
+3. connect the existing Berlin road-path layer;
+4. connect Germany data only after Small and Medium instances are reproducible;
+5. compare with a solver that implements the same multi-customer and multi-trip model.
 
 ## 15. References Used for the Heuristic
 

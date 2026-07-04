@@ -7,10 +7,12 @@ from heuristics.multi_customer_heuristic_toy import (
     DEPOT,
     ObjectiveScales,
     ObjectiveWeights,
+    VND_NEIGHBORHOOD_ORDER,
     build_toy_instance,
     construct_initial_solution,
     evaluate_solution,
     evaluate_vehicle_schedule,
+    improve_solution_vnd,
     solver_warm_start_routes,
 )
 
@@ -18,6 +20,25 @@ from heuristics.multi_customer_heuristic_toy import (
 class MultiCustomerHeuristicToyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.instance = build_toy_instance()
+
+    def _vnd_from_schedules(self, schedules):
+        construction = construct_initial_solution(self.instance)
+        evaluation = evaluate_solution(
+            self.instance,
+            schedules,
+            construction.scales,
+            require_all_customers=True,
+        )
+        self.assertTrue(evaluation.feasible)
+        initial_run = replace(
+            construction,
+            evaluation=evaluation,
+            runtime_seconds=0.0,
+        )
+        return initial_run, improve_solution_vnd(
+            self.instance,
+            initial_run,
+        )
 
     def test_constructs_complete_multi_trip_solution_with_charging(self) -> None:
         run = construct_initial_solution(self.instance)
@@ -952,6 +973,237 @@ class MultiCustomerHeuristicToyTests(unittest.TestCase):
             first.evaluation.objective,
             second.evaluation.objective,
         )
+
+    def test_vnd_improves_suboptimal_schedule_deterministically(self) -> None:
+        schedules = {
+            "TRUCK_G_1": [["G1", "G2"], ["G3", "G4"]],
+            "TRUCK_C_1": [["C2", "C1"]],
+            "TRUCK_G_BACKUP": [],
+        }
+        initial_run, first = self._vnd_from_schedules(schedules)
+        second = improve_solution_vnd(self.instance, initial_run)
+
+        self.assertEqual(first.status, "locally_optimal")
+        self.assertTrue(first.evaluation.feasible)
+        self.assertEqual(first.evaluation.unserved_customers, tuple())
+        self.assertLess(
+            first.evaluation.objective,
+            first.initial_evaluation.objective,
+        )
+        self.assertEqual(
+            first.evaluation.schedules,
+            second.evaluation.schedules,
+        )
+        self.assertEqual(first.accepted_moves, second.accepted_moves)
+        self.assertEqual(
+            first.evaluated_candidates,
+            second.evaluated_candidates,
+        )
+        self.assertTrue(first.accepted_moves)
+        for move in first.accepted_moves:
+            self.assertIn(move.neighborhood, VND_NEIGHBORHOOD_ORDER)
+            self.assertLess(move.objective_after, move.objective_before)
+
+    def test_vnd_does_not_worsen_locally_optimal_construction(self) -> None:
+        construction = construct_initial_solution(self.instance)
+
+        run = improve_solution_vnd(self.instance, construction)
+
+        self.assertEqual(run.status, "locally_optimal")
+        self.assertTrue(run.evaluation.feasible)
+        self.assertLessEqual(
+            run.evaluation.objective,
+            construction.evaluation.objective,
+        )
+        self.assertEqual(
+            run.evaluation.served_customers,
+            construction.evaluation.served_customers,
+        )
+        self.assertEqual(run.accepted_moves, tuple())
+        self.assertEqual(run.incomplete_candidates, 0)
+        self.assertEqual(run.incomplete_neighborhoods, tuple())
+        self.assertEqual(
+            run.neighborhood_passes,
+            len(VND_NEIGHBORHOOD_ORDER),
+        )
+
+    def test_vnd_reports_incomplete_candidate_search(self) -> None:
+        construction = construct_initial_solution(self.instance)
+
+        def incomplete_evaluation(*args, **kwargs):
+            return replace(
+                construction.evaluation,
+                feasible=False,
+                reasons=(
+                    "TRUCK_G_1: charging_search_incomplete "
+                    "during VND candidate.",
+                ),
+            )
+
+        with patch(
+            "heuristics.multi_customer_heuristic_toy.evaluate_solution",
+            side_effect=incomplete_evaluation,
+        ):
+            run = improve_solution_vnd(self.instance, construction)
+
+        self.assertEqual(run.status, "search_limit_reached")
+        self.assertIs(run.evaluation, construction.evaluation)
+        self.assertEqual(run.accepted_moves, tuple())
+        self.assertGreater(run.incomplete_candidates, 0)
+        self.assertEqual(
+            run.incomplete_candidates,
+            run.evaluated_candidates,
+        )
+        self.assertEqual(
+            run.incomplete_neighborhoods,
+            VND_NEIGHBORHOOD_ORDER,
+        )
+
+    def test_vnd_resets_incomplete_evidence_after_improvement(self) -> None:
+        schedules = {
+            "TRUCK_G_1": [["G1", "G2"], ["G3", "G4"]],
+            "TRUCK_C_1": [["C2", "C1"]],
+            "TRUCK_G_BACKUP": [],
+        }
+        initial_run, _ = self._vnd_from_schedules(schedules)
+        search_state = {"incomplete_injected": False}
+
+        def controlled_evaluation(
+            controlled_instance,
+            candidate_schedules,
+            scales,
+            *,
+            require_all_customers,
+            _charging_branch_counter=None,
+        ):
+            result = evaluate_solution(
+                controlled_instance,
+                candidate_schedules,
+                scales,
+                require_all_customers=require_all_customers,
+                _charging_branch_counter=_charging_branch_counter,
+            )
+            if not search_state["incomplete_injected"]:
+                search_state["incomplete_injected"] = True
+                return replace(
+                    result,
+                    feasible=False,
+                    reasons=(
+                        "TRUCK_G_1: charging_search_incomplete "
+                        "during an earlier VND cycle.",
+                    ),
+                )
+            return result
+
+        with patch(
+            "heuristics.multi_customer_heuristic_toy.evaluate_solution",
+            side_effect=controlled_evaluation,
+        ):
+            run = improve_solution_vnd(self.instance, initial_run)
+
+        self.assertTrue(run.accepted_moves)
+        self.assertEqual(run.status, "locally_optimal")
+        self.assertEqual(run.incomplete_candidates, 0)
+        self.assertEqual(run.incomplete_neighborhoods, tuple())
+
+    def test_vnd_inter_trip_relocate_removes_empty_trip(self) -> None:
+        schedules = {
+            "TRUCK_G_1": [["G1", "G2"], ["G4", "G3"]],
+            "TRUCK_C_1": [["C1"], ["C2"]],
+            "TRUCK_G_BACKUP": [],
+        }
+
+        _, run = self._vnd_from_schedules(schedules)
+
+        self.assertEqual(
+            run.evaluation.schedules["TRUCK_C_1"],
+            (("C1", "C2"),),
+        )
+        self.assertTrue(
+            any(
+                move.neighborhood == "inter_trip_relocate"
+                for move in run.accepted_moves
+            )
+        )
+
+    def test_vnd_inter_trip_swap_can_repartition_customers(self) -> None:
+        schedules = {
+            "TRUCK_G_1": [["G1", "G3"], ["G2", "G4"]],
+            "TRUCK_C_1": [["C1", "C2"]],
+            "TRUCK_G_BACKUP": [],
+        }
+
+        _, run = self._vnd_from_schedules(schedules)
+
+        self.assertTrue(
+            any(
+                move.neighborhood == "inter_trip_swap"
+                for move in run.accepted_moves
+            )
+        )
+        self.assertEqual(
+            set(run.evaluation.served_customers),
+            set(self.instance.customers),
+        )
+
+    def test_vnd_trip_reassignment_can_deactivate_expensive_vehicle(
+        self,
+    ) -> None:
+        schedules = {
+            "TRUCK_G_1": [["G4", "G3"]],
+            "TRUCK_C_1": [["C1", "C2"]],
+            "TRUCK_G_BACKUP": [["G1", "G2"]],
+        }
+        initial_run, run = self._vnd_from_schedules(schedules)
+
+        self.assertTrue(
+            any(
+                move.neighborhood == "trip_reassignment"
+                for move in run.accepted_moves
+            )
+        )
+        self.assertEqual(
+            run.evaluation.schedules["TRUCK_G_BACKUP"],
+            tuple(),
+        )
+        self.assertLess(
+            run.evaluation.total_cost,
+            initial_run.evaluation.total_cost,
+        )
+
+    def test_vnd_does_not_search_an_infeasible_initial_solution(self) -> None:
+        customers = dict(self.instance.customers)
+        customers["G1"] = replace(
+            customers["G1"],
+            hazard_class="UNSUPPORTED",
+        )
+        infeasible_instance = replace(
+            self.instance,
+            customers=customers,
+        )
+        construction = construct_initial_solution(infeasible_instance)
+
+        run = improve_solution_vnd(infeasible_instance, construction)
+
+        self.assertEqual(run.status, "initial_solution_infeasible")
+        self.assertIs(run.evaluation, construction.evaluation)
+        self.assertEqual(run.accepted_moves, tuple())
+        self.assertEqual(run.evaluated_candidates, 0)
+        self.assertEqual(run.incomplete_candidates, 0)
+        self.assertEqual(run.incomplete_neighborhoods, tuple())
+        self.assertEqual(run.neighborhood_passes, 0)
+
+    def test_vnd_rejects_invalid_neighborhood_limit(self) -> None:
+        construction = construct_initial_solution(self.instance)
+
+        for invalid_limit in (0, -1, 1.5, True):
+            with self.subTest(invalid_limit=invalid_limit):
+                with self.assertRaises(ValueError):
+                    improve_solution_vnd(
+                        self.instance,
+                        construction,
+                        max_neighborhood_passes=invalid_limit,
+                    )
 
     def test_exported_routes_retain_charging_and_revisit_stops(self) -> None:
         run = construct_initial_solution(self.instance)
