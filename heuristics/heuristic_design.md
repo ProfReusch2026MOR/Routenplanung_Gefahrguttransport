@@ -160,12 +160,15 @@ For every directed edge `e`:
 - station charging power in kW;
 - station energy price in EUR/kWh;
 - optional station or session fee;
+- up to three rule-feasible charging-station candidates per customer;
+- directed customer-to-station and station-to-customer paths, with separate distance, time, risk, energy, and permission values;
 - depot charging power and energy price;
 - break-node eligibility;
 - planning-horizon start and end;
 - maximum continuous driving time;
 - required break duration;
-- maximum daily driving and working time.
+- maximum daily driving and working time;
+- maximum number of complete charging-candidate branch evaluations.
 
 The driving-time simplification must be shared with the mathematical model before final experiments.
 
@@ -179,6 +182,8 @@ B =
 ```
 
 If no customer break attribute exists, customers are not assumed to be break-eligible.
+
+Every numeric input must be a finite number before construction starts. `NaN`, positive or negative infinity, invalid numeric types, and a non-integer charging-branch limit are reported as `input_data_error`.
 
 ## 5. Risk, Cost, and Time Evaluation
 
@@ -299,7 +304,7 @@ MinReserve_v <= InitialBattery_v <= UsableBattery_v
 BatteryAfterLeg >= MinReserve_v
 ```
 
-It starts each vehicle at `InitialBattery_v` and uses full charging. Partial charging is not used until both methods support it.
+It starts each vehicle at `InitialBattery_v` and uses full charging. `InitialBattery_v` is the state after overnight depot charging; the heuristic does not add another charging activity before the first trip. It should normally equal `UsableBattery_v` unless the input scenario deliberately specifies a lower morning state. Partial charging is not used until both methods support it.
 
 Energy already stored in the initial battery is not free. After the final trip of each used vehicle:
 
@@ -482,9 +487,11 @@ Generate paths for all required ordered stop pairs:
 depot -> customer
 customer -> customer
 customer -> depot
-stop -> charging station
-charging station -> stop
+customer -> candidate charging station
+candidate charging station -> the same customer
 ```
+
+For the Small and Medium instances, each customer keeps at most its three nearest charging stations by rule-feasible road distance. Straight-line distance may shortlist stations, but it does not determine final feasibility or rank. The two charging paths are stored separately because one-way roads and direction-specific restrictions can make them different.
 
 Candidate profiles may include:
 
@@ -630,16 +637,34 @@ For an insertion into an existing trip, `delta_cost` includes the changed trip c
 
 ### 8.1 Charging Repair
 
-For a route that is feasible except for battery reserve:
+Charging repair is tested when the next leg would violate either the battery reserve or the continuous-driving limit. It is also tested proactively by propagating feasible battery, time, and driving states over all remaining ordered stops. Dominated states with no more battery and no better time resources are removed. The shared first-version charging model uses a restricted side-trip:
 
-1. find the first leg where `BatteryAfterLeg < MinReserve_v`;
-2. test reachable charging stations before that leg;
-3. insert a station that allows the vehicle to continue and return;
-4. add charging time and cost;
-5. rebuild the rest of the schedule;
-6. choose the feasible station with the smallest objective increase.
+```text
+Customer i
+-> Charging station h
+-> Customer i
+-> next stop j
+```
+
+The vehicle must return to the customer from which the charging detour started. It cannot continue directly from the station to the next customer. This restriction reduces the charging matrix but may exclude a better unrestricted EV route.
+
+For each repair:
+
+1. identify the customer before the infeasible leg;
+2. test all available candidates among that customer's three stations;
+3. evaluate both directed paths of the side-trip;
+4. add charging time, cost, and any qualifying driver break;
+5. return to the same customer without repeating delivery or service;
+6. rebuild the rest of the schedule;
+7. choose the feasible station with the smallest objective increase.
 
 The initial version charges to `UsableBattery_v`. Duration and cost are calculated from charged energy, station power, and station price as defined in Section 5.2. Partial charging is a later extension unless the solver adopts it as well.
+
+If undelivered cargo remains after service at `Customer i`, both side-trip legs remain loaded and receive cargo-related HazMat risk. If no cargo remains, both legs are empty. Returning to the customer is a technical revisit: it does not reset capacity, reload the vehicle, repeat service, or increase the served-customer count.
+
+The same departure transition checks driver-break feasibility for ordinary travel, departure to a station, and departure after the technical revisit. Charging search is bounded separately for each top-level schedule evaluation by `MaxChargingBranchEvaluations`; rejected construction proposals do not consume the budget of later proposals. If untested station states remain when the limit is reached, the result is `charging_search_incomplete`, not ordinary route infeasibility. The final-schedule branch count is exported with the result.
+
+State propagation preserves the complete set of failure causes across the non-dominated frontier. If any state still has a battery or break failure, the previous customer receives a proactive charging test even when another state fails for time or shift. Only after those repair options fail is the best unavoidable structural, time-window, shift, or daily-limit reason reported. Adding an unused legal charging candidate must therefore not turn a feasible route into an infeasible route.
 
 ### 8.2 Schedule Simulation
 
@@ -764,6 +789,7 @@ no_legal_path
 capacity_infeasible
 commodity_incompatible
 charging_infeasible
+charging_search_incomplete
 time_window_infeasible
 shift_infeasible
 input_data_error
@@ -775,12 +801,17 @@ The overall run status is one of:
 feasible
 infeasible
 partial_infeasible
+search_limit_reached
 input_data_error
 ```
 
 `partial_infeasible` means that construction produced trips but left at least one customer unserved. It must never be reported or compared as a feasible solution.
 
+For every unserved customer, the result keeps distinct rejection reasons from both new-trip seed tests and all insertion positions. Stale insertion diagnostics are cleared as soon as any feasible insertion or new-trip seed candidate is found for that customer, even if a different candidate is selected in that round, and again when the customer is served. If any still-relevant rejection contains `charging_search_incomplete`, the run status is `search_limit_reached` rather than `partial_infeasible`. Completed trips retain their matching metrics, including end-of-day energy restoration.
+
 `input_data_error` means that preprocessing cannot safely interpret a required field, unit, transformation, or parameter. It is not a routing infeasibility.
+
+`search_limit_reached` means that the bounded heuristic did not inspect every required charging continuation. It must not be interpreted as proof that no feasible route exists.
 
 ## 11. Output
 
@@ -814,6 +845,7 @@ trips_used
 served_and_unserved_customers
 normalization_and_risk_metadata
 runtime_breakdown
+charging_branch_evaluations
 ```
 
 ### Selected Trips and Stops
@@ -833,6 +865,20 @@ charging_or_break_duration
 trip_start_and_return_time
 final_vehicle_battery
 ```
+
+`stop_sequence` preserves charging stations and technical customer revisits, for example `Customer i -> Station h -> Customer i`. A customer-order-only sequence is insufficient for checking battery, time, risk, and cost.
+
+### Solver Warm Start
+
+The formal solver-facing object is:
+
+```python
+heuristic_routes = {
+    "MAN_eTGX": ["DEPOT", "C1", "C2", "DEPOT"],
+}
+```
+
+Its key is the solver's unique physical-vehicle name (`solver_name`, falling back to vehicle type). Its list contains only customers and depot nodes because the current solver creates warm-start arc variables only for those nodes. Several trips by one vehicle are flattened with an intermediate `DEPOT`. Charging stations and technical revisits remain in the full selected-stop output and are not discarded from heuristic evaluation.
 
 ### Selected Legs or Edges
 
