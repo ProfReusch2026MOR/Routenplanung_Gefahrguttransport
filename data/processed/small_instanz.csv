@@ -1,0 +1,12 @@
+id,lat,lon,destination_name,un_number,substance_name,danger_class,quantity,unit
+DEPOT,51.325918,12.011645,Start_Depot_Leuna,-,-,-,-,-
+C1,51.413933, 12.291324,Post_Leipzig,UN 1202,Dieselkraftstoff,3,6500,Liter
+C2,51.487547, 12.078983,Logistik_Halle_Peissen,UN 1203,Dieselkraftstoff,3,9000,Liter
+C3,51.141971, 11.824094,Autopark_Naumburg,UN 1202,Dieselkraftstoff,3,5500,Liter
+C4,51.208217, 11.960303,Wertstoffhof_Gewerbegebiet_Weissenfels,UN 1203,Dieselkraftstoff,3,3500,Liter
+C5,50.884000,11.597000,Autohof_Jena_Lobeda,UN 1202,Dieselkraftstoff,3,5000,Liter
+C6,50.912463, 12.061472,Tankstelle_Gera_Nord,UN 1203,Dieselkraftstoff,3,9500,Liter
+C7,51.811731, 12.228786,Logistik_Dessau,UN 1202,Dieselkraftstoff,3,4500,Liter
+C8,51.009103, 12.462403,Industriegebiet_Altenburg,UN 1203,Dieselkraftstoff,3,6500,Liter
+C9,51.511895, 11.587541,Tankstelle_Eisleben,UN 1202,Dieselkraftstoff,3,2500,Liter
+C10,51.055287, 12.110381,Shell_Industriegebiet_Zeitz,UN 1203,Dieselkraftstoff,3,4500,Liter
