@@ -11,6 +11,7 @@ from dataclasses import dataclass, replace
 import math
 from numbers import Integral, Real
 from pprint import pformat
+import random
 import time
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -243,6 +244,36 @@ class VNDRun:
     incomplete_candidates: int
     incomplete_neighborhoods: Tuple[str, ...]
     neighborhood_passes: int
+    runtime_seconds: float
+
+
+@dataclass(frozen=True)
+class VNSImprovement:
+    iteration: int
+    neighborhood: str
+    shake_description: str
+    objective_before: float
+    shaken_objective: float
+    objective_after: float
+    vnd_moves: int
+
+
+@dataclass(frozen=True)
+class VNSRun:
+    status: str
+    initial_evaluation: SolutionEvaluation
+    evaluation: SolutionEvaluation
+    scales: ObjectiveScales
+    random_seed: int
+    iterations: int
+    accepted_improvements: Tuple[VNSImprovement, ...]
+    evaluated_shakes: int
+    feasible_shakes: int
+    incomplete_shakes: int
+    incomplete_local_searches: int
+    incomplete_neighborhoods: Tuple[str, ...]
+    vnd_runs: int
+    vnd_evaluated_candidates: int
     runtime_seconds: float
 
 
@@ -3006,6 +3037,7 @@ def improve_solution_vnd(
     initial_run: HeuristicRun,
     *,
     max_neighborhood_passes: int = 1_000,
+    deadline: Optional[float] = None,
 ) -> VNDRun:
     """Improve a complete construction solution with deterministic VND."""
     if (
@@ -3016,6 +3048,15 @@ def improve_solution_vnd(
         raise ValueError(
             "max_neighborhood_passes must be a positive integer."
         )
+    if (
+        deadline is not None
+        and (
+            isinstance(deadline, bool)
+            or not isinstance(deadline, Real)
+            or not math.isfinite(float(deadline))
+        )
+    ):
+        raise ValueError("deadline must be a finite monotonic timestamp.")
 
     start = time.perf_counter()
     initial_evaluation = initial_run.evaluation
@@ -3047,6 +3088,9 @@ def improve_solution_vnd(
     status = "locally_optimal"
 
     while neighborhood_index < len(VND_NEIGHBORHOOD_ORDER):
+        if deadline is not None and time.perf_counter() >= deadline:
+            status = "time_limit_reached"
+            break
         if neighborhood_passes >= max_neighborhood_passes:
             status = "iteration_limit_reached"
             break
@@ -3056,11 +3100,15 @@ def improve_solution_vnd(
         current_key = _schedule_key(current_evaluation.schedules)
         seen_schedules = set()
         best_candidate = None
+        deadline_reached = False
 
         for description, proposal in _vnd_neighborhood_candidates(
             neighborhood,
             current_evaluation.schedules,
         ):
+            if deadline is not None and time.perf_counter() >= deadline:
+                deadline_reached = True
+                break
             proposal_key = _schedule_key(proposal)
             if proposal_key == current_key or proposal_key in seen_schedules:
                 continue
@@ -3076,22 +3124,29 @@ def improve_solution_vnd(
                 if _search_limit_reached(candidate_evaluation.reasons):
                     incomplete_candidates += 1
                     incomplete_neighborhoods.add(neighborhood)
-                continue
-            if (
+            elif (
                 candidate_evaluation.objective
-                >= current_evaluation.objective - EPSILON
+                < current_evaluation.objective - EPSILON
             ):
-                continue
+                candidate = (
+                    _vnd_candidate_key(candidate_evaluation, description),
+                    description,
+                    candidate_evaluation,
+                )
+                if (
+                    best_candidate is None
+                    or candidate[0] < best_candidate[0]
+                ):
+                    best_candidate = candidate
 
-            candidate = (
-                _vnd_candidate_key(candidate_evaluation, description),
-                description,
-                candidate_evaluation,
-            )
-            if best_candidate is None or candidate[0] < best_candidate[0]:
-                best_candidate = candidate
+            if deadline is not None and time.perf_counter() >= deadline:
+                deadline_reached = True
+                break
 
         if best_candidate is None:
+            if deadline_reached:
+                status = "time_limit_reached"
+                break
             neighborhood_index += 1
             continue
 
@@ -3108,6 +3163,9 @@ def improve_solution_vnd(
         incomplete_candidates = 0
         incomplete_neighborhoods.clear()
         neighborhood_index = 0
+        if deadline_reached:
+            status = "time_limit_reached"
+            break
 
     if status == "locally_optimal" and incomplete_candidates:
         status = "search_limit_reached"
@@ -3126,6 +3184,267 @@ def improve_solution_vnd(
             if neighborhood in incomplete_neighborhoods
         ),
         neighborhood_passes=neighborhood_passes,
+        runtime_seconds=time.perf_counter() - start,
+    )
+
+
+def _unique_shake_candidates(
+    neighborhood: str,
+    schedules: Mapping[str, Sequence[Sequence[str]]],
+) -> Tuple[Tuple[str, Dict[str, List[List[str]]]], ...]:
+    current_key = _schedule_key(schedules)
+    seen_schedules = set()
+    candidates = []
+    for description, proposal in _vnd_neighborhood_candidates(
+        neighborhood,
+        schedules,
+    ):
+        proposal_key = _schedule_key(proposal)
+        if proposal_key == current_key or proposal_key in seen_schedules:
+            continue
+        seen_schedules.add(proposal_key)
+        candidates.append((description, proposal))
+    return tuple(candidates)
+
+
+def _ordered_neighborhood_names(
+    neighborhoods: Iterable[str],
+) -> Tuple[str, ...]:
+    unique_names = set(neighborhoods)
+    ordered = [
+        neighborhood
+        for neighborhood in VND_NEIGHBORHOOD_ORDER
+        if neighborhood in unique_names
+    ]
+    ordered.extend(
+        sorted(unique_names - set(VND_NEIGHBORHOOD_ORDER))
+    )
+    return tuple(ordered)
+
+
+def improve_solution_vns(
+    instance: ToyInstance,
+    initial_vnd_run: VNDRun,
+    *,
+    random_seed: int = 42,
+    max_iterations: int = 1_000,
+    max_seconds: float = 60.0,
+    max_vnd_neighborhood_passes: int = 1_000,
+) -> VNSRun:
+    """Escape a VND local optimum with reproducible Basic VNS shaking."""
+    if isinstance(random_seed, bool) or not isinstance(random_seed, Integral):
+        raise ValueError("random_seed must be an integer.")
+    if (
+        isinstance(max_iterations, bool)
+        or not isinstance(max_iterations, Integral)
+        or max_iterations <= 0
+    ):
+        raise ValueError("max_iterations must be a positive integer.")
+    if (
+        isinstance(max_seconds, bool)
+        or not isinstance(max_seconds, Real)
+        or not math.isfinite(float(max_seconds))
+        or max_seconds <= 0
+    ):
+        raise ValueError("max_seconds must be a positive finite number.")
+    if (
+        isinstance(max_vnd_neighborhood_passes, bool)
+        or not isinstance(max_vnd_neighborhood_passes, Integral)
+        or max_vnd_neighborhood_passes <= 0
+    ):
+        raise ValueError(
+            "max_vnd_neighborhood_passes must be a positive integer."
+        )
+
+    start = time.perf_counter()
+    deadline = start + float(max_seconds)
+    initial_evaluation = initial_vnd_run.evaluation
+    seed = int(random_seed)
+    if (
+        not initial_evaluation.feasible
+        or initial_evaluation.unserved_customers
+    ):
+        return VNSRun(
+            status="initial_solution_infeasible",
+            initial_evaluation=initial_evaluation,
+            evaluation=initial_evaluation,
+            scales=initial_vnd_run.scales,
+            random_seed=seed,
+            iterations=0,
+            accepted_improvements=tuple(),
+            evaluated_shakes=0,
+            feasible_shakes=0,
+            incomplete_shakes=0,
+            incomplete_local_searches=0,
+            incomplete_neighborhoods=tuple(),
+            vnd_runs=0,
+            vnd_evaluated_candidates=0,
+            runtime_seconds=time.perf_counter() - start,
+        )
+
+    rng = random.Random(seed)
+    current_evaluation = initial_evaluation
+    accepted_improvements: List[VNSImprovement] = []
+    iterations = 0
+    evaluated_shakes = 0
+    feasible_shakes = 0
+    incomplete_shakes = 0
+    incomplete_local_searches = (
+        1
+        if initial_vnd_run.status
+        in {
+            "search_limit_reached",
+            "iteration_limit_reached",
+            "time_limit_reached",
+        }
+        else 0
+    )
+    incomplete_neighborhoods = set(
+        initial_vnd_run.incomplete_neighborhoods
+    )
+    if (
+        initial_vnd_run.status
+        in {"iteration_limit_reached", "time_limit_reached"}
+        and not incomplete_neighborhoods
+    ):
+        incomplete_neighborhoods.add("initial_vnd")
+    vnd_runs = 0
+    vnd_evaluated_candidates = 0
+    neighborhood_index = 0
+    status = "neighborhoods_exhausted"
+
+    while neighborhood_index < len(VND_NEIGHBORHOOD_ORDER):
+        if iterations >= max_iterations:
+            status = "iteration_limit_reached"
+            break
+        if time.perf_counter() >= deadline:
+            status = "time_limit_reached"
+            break
+
+        neighborhood = VND_NEIGHBORHOOD_ORDER[neighborhood_index]
+        iterations += 1
+        candidates = _unique_shake_candidates(
+            neighborhood,
+            current_evaluation.schedules,
+        )
+        if time.perf_counter() >= deadline:
+            status = "time_limit_reached"
+            break
+        if not candidates:
+            neighborhood_index += 1
+            continue
+
+        shake_description, shaken_schedules = candidates[
+            rng.randrange(len(candidates))
+        ]
+        shaken_evaluation = evaluate_solution(
+            instance,
+            shaken_schedules,
+            initial_vnd_run.scales,
+            require_all_customers=True,
+        )
+        evaluated_shakes += 1
+        if not shaken_evaluation.feasible:
+            if _search_limit_reached(shaken_evaluation.reasons):
+                incomplete_shakes += 1
+                incomplete_neighborhoods.add(neighborhood)
+            if time.perf_counter() >= deadline:
+                status = "time_limit_reached"
+                break
+            neighborhood_index += 1
+            continue
+
+        feasible_shakes += 1
+        if time.perf_counter() >= deadline:
+            status = "time_limit_reached"
+            break
+        shaken_run = HeuristicRun(
+            status="feasible",
+            evaluation=shaken_evaluation,
+            scales=initial_vnd_run.scales,
+            runtime_seconds=0.0,
+        )
+        local_run = improve_solution_vnd(
+            instance,
+            shaken_run,
+            max_neighborhood_passes=max_vnd_neighborhood_passes,
+            deadline=deadline,
+        )
+        vnd_runs += 1
+        vnd_evaluated_candidates += local_run.evaluated_candidates
+        local_search_incomplete = local_run.status in {
+            "search_limit_reached",
+            "iteration_limit_reached",
+            "time_limit_reached",
+        }
+
+        if (
+            local_run.evaluation.objective
+            < current_evaluation.objective - EPSILON
+        ):
+            accepted_improvements.append(
+                VNSImprovement(
+                    iteration=iterations,
+                    neighborhood=neighborhood,
+                    shake_description=shake_description,
+                    objective_before=current_evaluation.objective,
+                    shaken_objective=shaken_evaluation.objective,
+                    objective_after=local_run.evaluation.objective,
+                    vnd_moves=len(local_run.accepted_moves),
+                )
+            )
+            current_evaluation = local_run.evaluation
+            incomplete_shakes = 0
+            incomplete_local_searches = 0
+            incomplete_neighborhoods.clear()
+            if local_search_incomplete:
+                incomplete_local_searches = 1
+                incomplete_neighborhoods.update(
+                    local_run.incomplete_neighborhoods
+                )
+                if not local_run.incomplete_neighborhoods:
+                    incomplete_neighborhoods.add(neighborhood)
+            neighborhood_index = 0
+        else:
+            if local_search_incomplete:
+                incomplete_local_searches += 1
+                incomplete_neighborhoods.update(
+                    local_run.incomplete_neighborhoods
+                )
+                if not local_run.incomplete_neighborhoods:
+                    incomplete_neighborhoods.add(neighborhood)
+            neighborhood_index += 1
+
+        if (
+            local_run.status == "time_limit_reached"
+            or time.perf_counter() >= deadline
+        ):
+            status = "time_limit_reached"
+            break
+
+    if (
+        status == "neighborhoods_exhausted"
+        and (incomplete_shakes or incomplete_local_searches)
+    ):
+        status = "search_limit_reached"
+
+    return VNSRun(
+        status=status,
+        initial_evaluation=initial_evaluation,
+        evaluation=current_evaluation,
+        scales=initial_vnd_run.scales,
+        random_seed=seed,
+        iterations=iterations,
+        accepted_improvements=tuple(accepted_improvements),
+        evaluated_shakes=evaluated_shakes,
+        feasible_shakes=feasible_shakes,
+        incomplete_shakes=incomplete_shakes,
+        incomplete_local_searches=incomplete_local_searches,
+        incomplete_neighborhoods=_ordered_neighborhood_names(
+            incomplete_neighborhoods
+        ),
+        vnd_runs=vnd_runs,
+        vnd_evaluated_candidates=vnd_evaluated_candidates,
         runtime_seconds=time.perf_counter() - start,
     )
 
@@ -3253,16 +3572,68 @@ def summarize_vnd_run(run: VNDRun) -> str:
     return "\n".join(lines)
 
 
+def summarize_vns_run(run: VNSRun) -> str:
+    """Summarize reproducible shaking and accepted basin improvements."""
+    improvement = (
+        run.initial_evaluation.objective - run.evaluation.objective
+    )
+    lines = [
+        "Variable Neighborhood Search",
+        "-" * 28,
+        f"status={run.status}",
+        f"random_seed={run.random_seed}",
+        f"initial_objective={run.initial_evaluation.objective:.6f}",
+        f"final_objective={run.evaluation.objective:.6f}",
+        f"objective_improvement={improvement:.6f}",
+        f"iterations={run.iterations}",
+        f"accepted_improvements={len(run.accepted_improvements)}",
+        f"evaluated_shakes={run.evaluated_shakes}",
+        f"feasible_shakes={run.feasible_shakes}",
+        f"incomplete_shakes={run.incomplete_shakes}",
+        (
+            "incomplete_local_searches="
+            f"{run.incomplete_local_searches}"
+        ),
+        (
+            "incomplete_neighborhoods="
+            + (
+                ",".join(run.incomplete_neighborhoods)
+                if run.incomplete_neighborhoods
+                else "none"
+            )
+        ),
+        f"vnd_runs={run.vnd_runs}",
+        f"vnd_evaluated_candidates={run.vnd_evaluated_candidates}",
+        f"runtime_seconds={run.runtime_seconds:.6f}",
+    ]
+    for improvement_index, accepted in enumerate(
+        run.accepted_improvements,
+        start=1,
+    ):
+        lines.append(
+            f"improvement_{improvement_index}=iteration "
+            f"{accepted.iteration}, {accepted.neighborhood}: "
+            f"{accepted.shake_description} "
+            f"({accepted.objective_before:.6f} -> "
+            f"{accepted.objective_after:.6f}, "
+            f"vnd_moves={accepted.vnd_moves})"
+        )
+    return "\n".join(lines)
+
+
 def main() -> None:
     instance = build_toy_instance()
     construction_run = construct_initial_solution(instance)
     vnd_run = improve_solution_vnd(instance, construction_run)
+    vns_run = improve_solution_vns(instance, vnd_run)
     print(summarize_run(construction_run))
     print()
     print(summarize_vnd_run(vnd_run))
+    print()
+    print(summarize_vns_run(vns_run))
     heuristic_routes = build_heuristic_routes(
         instance,
-        vnd_run.evaluation,
+        vns_run.evaluation,
     )
     print()
     print("heuristic_routes = " + pformat(heuristic_routes, sort_dicts=False))

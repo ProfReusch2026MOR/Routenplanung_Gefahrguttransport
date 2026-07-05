@@ -1,4 +1,5 @@
 from dataclasses import replace
+import time
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +14,7 @@ from heuristics.multi_customer_heuristic_toy import (
     evaluate_solution,
     evaluate_vehicle_schedule,
     improve_solution_vnd,
+    improve_solution_vns,
     solver_warm_start_routes,
 )
 
@@ -1203,6 +1205,365 @@ class MultiCustomerHeuristicToyTests(unittest.TestCase):
                         self.instance,
                         construction,
                         max_neighborhood_passes=invalid_limit,
+                    )
+
+        for invalid_deadline in (True, float("inf"), "later"):
+            with self.subTest(invalid_deadline=invalid_deadline):
+                with self.assertRaises(ValueError):
+                    improve_solution_vnd(
+                        self.instance,
+                        construction,
+                        deadline=invalid_deadline,
+                    )
+
+    def test_vnd_deadline_stops_after_current_candidate(self) -> None:
+        construction = construct_initial_solution(self.instance)
+
+        def delayed_evaluation(*args, **kwargs):
+            time.sleep(0.05)
+            return evaluate_solution(*args, **kwargs)
+
+        with patch(
+            "heuristics.multi_customer_heuristic_toy.evaluate_solution",
+            side_effect=delayed_evaluation,
+        ) as mocked_evaluation:
+            run = improve_solution_vnd(
+                self.instance,
+                construction,
+                deadline=time.perf_counter() + 0.02,
+            )
+
+        self.assertEqual(run.status, "time_limit_reached")
+        self.assertEqual(mocked_evaluation.call_count, 1)
+        self.assertEqual(run.evaluated_candidates, 1)
+        self.assertTrue(run.evaluation.feasible)
+
+    def test_vns_is_deterministic_and_does_not_worsen_vnd(self) -> None:
+        construction = construct_initial_solution(self.instance)
+        vnd_run = improve_solution_vnd(self.instance, construction)
+
+        first = improve_solution_vns(
+            self.instance,
+            vnd_run,
+            random_seed=42,
+            max_seconds=5.0,
+        )
+        second = improve_solution_vns(
+            self.instance,
+            vnd_run,
+            random_seed=42,
+            max_seconds=5.0,
+        )
+
+        self.assertEqual(first.status, "neighborhoods_exhausted")
+        self.assertTrue(first.evaluation.feasible)
+        self.assertLessEqual(
+            first.evaluation.objective,
+            vnd_run.evaluation.objective,
+        )
+        self.assertEqual(
+            first.evaluation.schedules,
+            second.evaluation.schedules,
+        )
+        self.assertEqual(
+            first.accepted_improvements,
+            second.accepted_improvements,
+        )
+        self.assertEqual(first.iterations, second.iterations)
+        self.assertEqual(first.evaluated_shakes, second.evaluated_shakes)
+        self.assertEqual(first.feasible_shakes, second.feasible_shakes)
+
+    def test_vns_can_escape_a_vnd_local_optimum(self) -> None:
+        schedules = {
+            "TRUCK_G_1": [],
+            "TRUCK_C_1": [["C1", "C2"]],
+            "TRUCK_G_BACKUP": [["G1", "G2"], ["G4", "G3"]],
+        }
+        _, local_run = self._vnd_from_schedules(schedules)
+        self.assertEqual(local_run.status, "locally_optimal")
+
+        run = improve_solution_vns(
+            self.instance,
+            local_run,
+            random_seed=3,
+            max_iterations=30,
+            max_seconds=5.0,
+        )
+
+        self.assertEqual(run.status, "neighborhoods_exhausted")
+        self.assertTrue(run.accepted_improvements)
+        self.assertLess(
+            run.evaluation.objective,
+            local_run.evaluation.objective,
+        )
+        self.assertEqual(
+            run.evaluation.schedules["TRUCK_G_BACKUP"],
+            tuple(),
+        )
+        improvement = run.accepted_improvements[0]
+        self.assertEqual(improvement.neighborhood, "trip_reassignment")
+        self.assertGreater(
+            improvement.shaken_objective,
+            improvement.objective_before,
+        )
+        self.assertLess(
+            improvement.objective_after,
+            improvement.objective_before,
+        )
+
+    def test_vns_reports_incomplete_shake_search(self) -> None:
+        construction = construct_initial_solution(self.instance)
+        vnd_run = improve_solution_vnd(self.instance, construction)
+
+        def incomplete_evaluation(*args, **kwargs):
+            return replace(
+                vnd_run.evaluation,
+                feasible=False,
+                reasons=(
+                    "TRUCK_G_1: charging_search_incomplete "
+                    "during VNS shaking.",
+                ),
+            )
+
+        with patch(
+            "heuristics.multi_customer_heuristic_toy.evaluate_solution",
+            side_effect=incomplete_evaluation,
+        ):
+            run = improve_solution_vns(
+                self.instance,
+                vnd_run,
+                random_seed=42,
+                max_seconds=5.0,
+            )
+
+        self.assertEqual(run.status, "search_limit_reached")
+        self.assertIs(run.evaluation, vnd_run.evaluation)
+        self.assertEqual(run.accepted_improvements, tuple())
+        self.assertEqual(run.incomplete_shakes, run.evaluated_shakes)
+        self.assertEqual(
+            run.incomplete_neighborhoods,
+            VND_NEIGHBORHOOD_ORDER,
+        )
+        self.assertEqual(run.vnd_runs, 0)
+
+    def test_vns_reports_incomplete_local_search(self) -> None:
+        construction = construct_initial_solution(self.instance)
+        vnd_run = improve_solution_vnd(self.instance, construction)
+
+        def incomplete_local_search(
+            controlled_instance,
+            shaken_run,
+            *,
+            max_neighborhood_passes,
+            deadline,
+        ):
+            return replace(
+                vnd_run,
+                status="search_limit_reached",
+                initial_evaluation=shaken_run.evaluation,
+                evaluation=shaken_run.evaluation,
+                accepted_moves=tuple(),
+                evaluated_candidates=1,
+                incomplete_candidates=1,
+                incomplete_neighborhoods=("intra_trip_relocate",),
+                neighborhood_passes=1,
+            )
+
+        with patch(
+            "heuristics.multi_customer_heuristic_toy.improve_solution_vnd",
+            side_effect=incomplete_local_search,
+        ):
+            run = improve_solution_vns(
+                self.instance,
+                vnd_run,
+                random_seed=42,
+                max_seconds=5.0,
+            )
+
+        self.assertEqual(run.status, "search_limit_reached")
+        self.assertGreater(run.incomplete_local_searches, 0)
+        self.assertIn(
+            "intra_trip_relocate",
+            run.incomplete_neighborhoods,
+        )
+        self.assertEqual(run.vnd_runs, run.feasible_shakes)
+
+    def test_vns_preserves_initial_vnd_time_limit(self) -> None:
+        construction = construct_initial_solution(self.instance)
+        complete_vnd_run = improve_solution_vnd(
+            self.instance,
+            construction,
+        )
+        time_limited_vnd_run = replace(
+            complete_vnd_run,
+            status="time_limit_reached",
+            incomplete_candidates=0,
+            incomplete_neighborhoods=tuple(),
+        )
+
+        run = improve_solution_vns(
+            self.instance,
+            time_limited_vnd_run,
+            random_seed=42,
+            max_seconds=5.0,
+        )
+
+        self.assertEqual(run.status, "search_limit_reached")
+        self.assertEqual(run.accepted_improvements, tuple())
+        self.assertEqual(run.incomplete_local_searches, 1)
+        self.assertEqual(
+            run.incomplete_neighborhoods,
+            ("initial_vnd",),
+        )
+
+    def test_vns_resets_incomplete_evidence_after_improvement(self) -> None:
+        schedules = {
+            "TRUCK_G_1": [],
+            "TRUCK_C_1": [["C1", "C2"]],
+            "TRUCK_G_BACKUP": [["G1", "G2"], ["G4", "G3"]],
+        }
+        _, local_run = self._vnd_from_schedules(schedules)
+        search_state = {"incomplete_injected": False}
+
+        def controlled_evaluation(
+            controlled_instance,
+            candidate_schedules,
+            scales,
+            *,
+            require_all_customers,
+            _charging_branch_counter=None,
+        ):
+            result = evaluate_solution(
+                controlled_instance,
+                candidate_schedules,
+                scales,
+                require_all_customers=require_all_customers,
+                _charging_branch_counter=_charging_branch_counter,
+            )
+            if not search_state["incomplete_injected"]:
+                search_state["incomplete_injected"] = True
+                return replace(
+                    result,
+                    feasible=False,
+                    reasons=(
+                        "TRUCK_G_1: charging_search_incomplete "
+                        "during an earlier VNS cycle.",
+                    ),
+                )
+            return result
+
+        with patch(
+            "heuristics.multi_customer_heuristic_toy.evaluate_solution",
+            side_effect=controlled_evaluation,
+        ):
+            run = improve_solution_vns(
+                self.instance,
+                local_run,
+                random_seed=3,
+                max_iterations=30,
+                max_seconds=5.0,
+            )
+
+        self.assertTrue(run.accepted_improvements)
+        self.assertEqual(run.status, "neighborhoods_exhausted")
+        self.assertEqual(run.incomplete_shakes, 0)
+        self.assertEqual(run.incomplete_local_searches, 0)
+        self.assertEqual(run.incomplete_neighborhoods, tuple())
+
+    def test_vns_does_not_start_vnd_after_shake_deadline(self) -> None:
+        construction = construct_initial_solution(self.instance)
+        vnd_run = improve_solution_vnd(self.instance, construction)
+
+        def delayed_shake(*args, **kwargs):
+            time.sleep(0.05)
+            return vnd_run.evaluation
+
+        with patch(
+            "heuristics.multi_customer_heuristic_toy.evaluate_solution",
+            side_effect=delayed_shake,
+        ), patch(
+            "heuristics.multi_customer_heuristic_toy.improve_solution_vnd",
+        ) as nested_vnd:
+            run = improve_solution_vns(
+                self.instance,
+                vnd_run,
+                max_seconds=0.02,
+            )
+
+        self.assertEqual(run.status, "time_limit_reached")
+        self.assertEqual(run.evaluated_shakes, 1)
+        self.assertEqual(run.feasible_shakes, 1)
+        self.assertEqual(run.vnd_runs, 0)
+        nested_vnd.assert_not_called()
+
+    def test_vns_honors_iteration_and_time_limits(self) -> None:
+        construction = construct_initial_solution(self.instance)
+        vnd_run = improve_solution_vnd(self.instance, construction)
+
+        iteration_limited = improve_solution_vns(
+            self.instance,
+            vnd_run,
+            max_iterations=1,
+            max_seconds=5.0,
+        )
+        time_limited = improve_solution_vns(
+            self.instance,
+            vnd_run,
+            max_seconds=1e-12,
+        )
+
+        self.assertEqual(
+            iteration_limited.status,
+            "iteration_limit_reached",
+        )
+        self.assertEqual(iteration_limited.iterations, 1)
+        self.assertEqual(time_limited.status, "time_limit_reached")
+        self.assertEqual(time_limited.iterations, 0)
+
+    def test_vns_does_not_search_an_infeasible_initial_solution(self) -> None:
+        customers = dict(self.instance.customers)
+        customers["G1"] = replace(
+            customers["G1"],
+            hazard_class="UNSUPPORTED",
+        )
+        infeasible_instance = replace(
+            self.instance,
+            customers=customers,
+        )
+        construction = construct_initial_solution(infeasible_instance)
+        vnd_run = improve_solution_vnd(
+            infeasible_instance,
+            construction,
+        )
+
+        run = improve_solution_vns(infeasible_instance, vnd_run)
+
+        self.assertEqual(run.status, "initial_solution_infeasible")
+        self.assertIs(run.evaluation, vnd_run.evaluation)
+        self.assertEqual(run.iterations, 0)
+        self.assertEqual(run.evaluated_shakes, 0)
+        self.assertEqual(run.vnd_runs, 0)
+
+    def test_vns_rejects_invalid_configuration(self) -> None:
+        construction = construct_initial_solution(self.instance)
+        vnd_run = improve_solution_vnd(self.instance, construction)
+        invalid_configurations = (
+            {"random_seed": True},
+            {"random_seed": 1.5},
+            {"max_iterations": 0},
+            {"max_iterations": True},
+            {"max_seconds": 0.0},
+            {"max_seconds": float("inf")},
+            {"max_vnd_neighborhood_passes": 0},
+        )
+
+        for configuration in invalid_configurations:
+            with self.subTest(configuration=configuration):
+                with self.assertRaises(ValueError):
+                    improve_solution_vns(
+                        self.instance,
+                        vnd_run,
+                        **configuration,
                     )
 
     def test_exported_routes_retain_charging_and_revisit_stops(self) -> None:

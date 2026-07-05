@@ -754,17 +754,26 @@ Each neighborhood evaluates all unique candidate schedules and selects its deter
 
 VND stops when a complete neighborhood cycle finds no improvement or the neighborhood-pass limit is reached. A candidate rejected with `charging_search_incomplete` is not treated as proven infeasible. If a complete cycle contains such a candidate and accepts no later improvement, the final status is `search_limit_reached`, while the feasible incumbent is retained. Accepting a move clears incomplete-search evidence from the previous cycle because the incumbent and its neighborhoods have changed.
 
+When VND is nested inside VNS, it receives the same absolute monotonic deadline. VND checks it before every candidate evaluation and between neighborhood passes. A candidate evaluation that has already started may finish, but no further candidate is started after expiry. The best accepted feasible incumbent is returned with `time_limit_reached`.
+
 The result reports the initial and final objective, accepted moves, evaluated candidate count, unresolved incomplete candidate count and neighborhoods, neighborhood passes, and runtime.
 
-### Future VNS Shaking
+### Reproducible VNS Shaking
 
-The later VNS stage applies one random move from the current neighborhood. An infeasible shaken solution receives one charging-and-schedule repair attempt and is discarded if it remains infeasible. The planned configuration is:
+The implemented Basic VNS starts from the VND result. It selects one unique schedule move at random from the current neighborhood, rebuilds charging and the complete schedule through the shared evaluator, and runs VND from every feasible shaken solution. A locally improved shaken solution replaces the incumbent only when its objective is better by more than `1e-9`; the search then restarts at the first neighborhood. Otherwise it continues with the next neighborhood.
+
+The configuration is:
 
 ```text
 random_seed = 42
 max_vns_iterations = 1000
 max_vns_seconds = 60
+max_vnd_neighborhood_passes = 1000
 ```
+
+VNS computes one absolute monotonic deadline at startup. It checks that deadline after candidate generation, immediately after the atomic shake evaluation, and after nested VND. The same deadline is passed into VND. VNS therefore never starts nested local search after the shared budget has expired, although an atomic evaluation already in progress may finish.
+
+VNS stops after a complete neighborhood cycle without an accepted basin improvement, or when the iteration or runtime limit is reached. `neighborhoods_exhausted` does not claim global optimality. Search-incomplete shake evaluations and bounded VND runs are retained for the current incumbent. This includes an initial VND ending with a charging-search, iteration, or time limit; when it has no specific neighborhood diagnosis, the result records `initial_vnd`. If the final completed cycle contains unresolved evidence, the status is `search_limit_reached`. Accepting a fully searched new incumbent clears evidence from the previous cycle.
 
 Seed 42 is used for deterministic debugging and the standard demonstration. Final stochastic experiments use at least:
 
@@ -863,6 +872,10 @@ vnd_accepted_moves
 vnd_evaluated_candidates
 vnd_incomplete_candidates_and_neighborhoods
 vnd_neighborhood_passes
+vns_random_seed_and_status
+vns_iterations_and_accepted_improvements
+vns_shake_and_nested_vnd_statistics
+vns_incomplete_search_diagnostics
 ```
 
 ### Selected Trips and Stops
@@ -1038,12 +1051,26 @@ Improve with VND:
         else:
             continue with the next neighborhood
 
-Improve with VNS later:
-    repeat until stopping condition:
-        shake with the current neighborhood
-        repair paths, charging, and schedule
-        run local improvement
-        keep the best feasible solution
+Improve with VNS:
+    best_solution = VND result
+    neighborhood = first schedule neighborhood
+    initialize a private random generator with the experiment seed
+
+    while a neighborhood remains and no limit is reached:
+        select one unique random shake from the current neighborhood
+        rebuild charging and evaluate the complete shaken schedule
+        stop before VND if the shared deadline has expired
+
+        if the shaken schedule is feasible:
+            run VND from the shaken schedule with the same deadline
+
+            if the local result strictly improves best_solution:
+                accept it
+                restart at the first neighborhood
+                continue
+
+        record any incomplete search evidence
+        continue with the next neighborhood
 
 Validate and export:
     calculate final battery for every used vehicle
@@ -1054,13 +1081,12 @@ Validate and export:
 
 ## 14. Implementation Order
 
-The multi-customer toy now covers data structures, shared schedule evaluation, sequential insertion, multi-trip reuse, charging repair, and deterministic VND. The remaining implementation order is:
+The multi-customer toy now covers data structures, shared schedule evaluation, sequential insertion, multi-trip reuse, charging repair, deterministic VND, and reproducible Basic VNS. The remaining implementation order is:
 
-1. add reproducible VNS shaking around the implemented VND;
-2. expose explicit path and charging-stop moves when the real-data representation supports alternatives;
-3. connect the existing Berlin road-path layer;
-4. connect Germany data only after Small and Medium instances are reproducible;
-5. compare with a solver that implements the same multi-customer and multi-trip model.
+1. expose explicit path and charging-stop moves when the real-data representation supports alternatives;
+2. connect the existing Berlin road-path layer;
+3. connect Germany data only after Small and Medium instances are reproducible;
+4. compare with a solver that implements the same multi-customer and multi-trip model.
 
 ## 15. References Used for the Heuristic
 
