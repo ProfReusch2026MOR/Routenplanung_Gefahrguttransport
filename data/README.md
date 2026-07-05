@@ -6,6 +6,6 @@ Daten-Download
 
 Die Daten können über Sciebo heruntergeladen werden:
 
-Link: https://hsbi.sciebo.de/s/9HZxgrydjLtwKzx
+Link: https://hsbi.sciebo.de/s/2yJ4WQaEXinDpkB
 
 Passwort: 1234
