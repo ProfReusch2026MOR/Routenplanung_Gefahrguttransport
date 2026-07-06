@@ -2,314 +2,1040 @@
 
 ## 1. Scope
 
-This document defines the heuristic for the routing-and-assignment part of the project.
+This document defines the target heuristic for a single-depot hazardous-material vehicle routing problem.
 
-Each delivery `l` is treated as an independent one-way origin-destination task with `O_l`, `D_l`, `Dem_l`, and `Class_l`. The heuristic chooses one feasible network path and one suitable electric truck for that delivery. It does not calculate a return trip, schedule the order of several deliveries, or model vehicle repositioning between tasks. Payload capacity is released after unloading.
+The heuristic assigns customers to physical vehicles, orders the customers within depot-to-depot trips, selects road paths that satisfy the implemented ADR/tunnel rules, and schedules several trips by the same vehicle when time permits. The target scenario uses a heterogeneous electric fleet and incompatible hazardous goods such as gasoline and chlorine.
 
-## 2. Selected Method
+The first multi-customer version uses these assumptions:
 
-The selected method is a:
+- every order starts at the depot and is delivered to one customer;
+- every customer order is served exactly once and is not split;
+- one trip carries only one compatible hazardous-goods class;
+- every trip starts and ends at the depot;
+- payload capacity is restored only after the vehicle returns and reloads;
+- a vehicle may perform several non-overlapping trips during the planning day;
+- customer service, depot reload, charging, and driver-break times affect the schedule;
+- the final depot return is empty and has transport cost and time but no cargo-related HazMat risk;
+- the empty but uncleaned vehicle continues to use the same implemented ADR/tunnel rules as its loaded trip.
 
-> **Risk-cost candidate path heuristic with vehicle-assignment local search.**
+As a conservative first-version assumption, a physical vehicle cannot change hazardous-goods class during the planning day. A later version may allow a class change after depot cleaning if cleaning time, cost, and legal rules are defined by the team.
 
-The idea is simple:
+The existing one-way OD heuristic remains useful as the lower road-path layer. It is not the complete target algorithm anymore.
 
-1. For every delivery, generate a small set of feasible candidate paths from `O_l` to `D_l`.
-2. Assign each delivery-path combination to an electric truck while checking capacity and range.
-3. Improve the first solution by switching paths or changing vehicle assignments.
+## 2. Selected Method and Literature Basis
 
-This method fits the project because the routing decision and the vehicle decision are connected but can still be handled in understandable steps.
+The selected method is:
 
-## 3. Why This Heuristic Fits
+> **Sequential route-building insertion with Variable Neighborhood Search improvement.**
 
-The method matches the current data and model structure:
+Its components are traceable to the project literature:
 
-- deliveries already have origin and destination nodes;
-- edges carry length, risk, cost, and permission information;
-- vehicles have capacity, fixed cost, variable cost, and battery range;
-- a feasible solution can be represented by selected path edges, vehicle assignments, and active vehicles.
+- Zografos and Androutsopoulos (2004) support a bi-objective route-building heuristic for hazardous-material distribution with time windows.
+- Androutsopoulos and Zografos (2012) construct routes sequentially, use a weighted risk-cost objective, and select feasible customer insertions with an insertion metric.
+- Bula et al. (2017) use Variable Neighborhood Search and Variable Neighborhood Descent for heterogeneous-fleet HazMat routing.
+- Cattaruzza et al. (2014) address incompatible commodities, time windows, and several trips by the same vehicle.
+- Schneider et al. (2014) support battery and charging-station feasibility in an electric VRP with time windows.
 
-This makes the heuristic easy to compare with the solver while still keeping the implementation manageable.
+The implementation is an adaptation rather than an exact reproduction:
+
+- static candidate paths replace the time-dependent label-setting procedure from Androutsopoulos and Zografos (2012);
+- the baseline may test every feasible insertion position instead of only the front of the unfinished route;
+- VNS neighborhoods are adapted to hazardous-goods compatibility, charging, and multi-trip scheduling;
+- the risk formula uses the population, accident, nature, class, and vehicle data available in this project.
+
+## 3. Solution Structure
+
+The heuristic has two layers.
+
+### 3.1 Road-Path Layer
+
+This layer maps relevant locations to the road graph and generates rule-feasible path alternatives between:
+
+```text
+depot, customers, charging stations, and approved break locations
+```
+
+Each path alternative contains:
+
+```text
+path_id
+from_stop
+to_stop
+hazard_class
+load_state
+edge_sequence
+distance_km
+travel_time_h
+risk
+variable_cost_by_vehicle
+energy_use_by_vehicle
+implemented_rules_feasible
+```
+
+### 3.2 Route-and-Schedule Layer
+
+This layer builds an ordered solution:
+
+```text
+Vehicle
+    Trip 1: Depot -> Customer -> Customer -> Depot
+    Trip 2: Depot -> Customer -> Charging Station -> Customer -> Depot
+```
+
+It decides:
+
+- which physical vehicle performs each trip;
+- which customers belong to each trip;
+- the order of customers and charging stops;
+- the road-path alternative used for every leg;
+- trip start, arrival, service, charging, break, and return times;
+- when a vehicle becomes available for another trip.
 
 ## 4. Input Data
 
-The heuristic uses the same conceptual data as the mathematical model.
+### 4.1 Sets
 
-The heuristic assumes that edge risk scores and legal feasibility parameters are provided by the data and model work packages. It does not derive legal restrictions itself; it uses `Risk_{e,k}` and `Allow_{e,k}` to build feasible paths and evaluate risk-cost trade-offs. Origin and destination coordinates must both map to an eligible road-network node within the agreed mapping threshold.
-
-### Sets
-
-- `V`: available electric trucks;
-- `L`: hazardous-material deliveries;
-- `N`: road network nodes;
+- `V`: physical vehicles;
+- `C`: customer orders;
+- `N`: road-network nodes;
 - `E`: directed road edges;
-- `K`: hazardous-material classes.
+- `K`: hazardous-goods classes;
+- `H`: charging-station nodes;
+- `B`: nodes at which a driver break is allowed.
 
-### Delivery Data
+### 4.2 Customer Data
 
-For each delivery `l`:
+For every customer order `c`:
 
-- `O_l`: origin node;
-- `D_l`: destination node;
-- `Dem_l`: delivery weight;
-- `Class_l`: hazardous-material class.
+- `Demand_c`: delivery mass in one documented unit, preferably kg;
+- `Class_c`: hazardous-goods class;
+- `Location_c`: customer coordinate or mapped node;
+- `ServiceTime_c`: unloading and service duration;
+- `Earliest_c`, `Latest_c`: optional service time window. If absent, use the complete planning horizon.
 
-### Vehicle Data
+If input quantities are provided in liters, they must be converted to kg before the capacity check. The conversion rule and density must be recorded in the run metadata.
 
-For each vehicle `v`:
+### 4.3 Vehicle Data
 
-- `Cap_v`: payload capacity;
-- `Range_v`: battery range;
-- `FC_v`: fixed cost if the vehicle is used;
-- `VC_{v,e}`: variable cost on edge `e`, based on length and energy cost.
+For every physical vehicle `v`:
 
-### Edge Data
+- `VehicleId_v`: unique identifier of one physical vehicle;
+- `Type_v`: vehicle type;
+- `Cap_v`: payload capacity in kg;
+- `UsableBattery_v`: usable battery capacity in kWh;
+- `InitialBattery_v`: battery energy at the start of the planning day;
+- `MinReserve_v`: minimum permitted battery reserve;
+- `EnergyRate_v`: energy consumption in kWh per km;
+- `MaxChargingPower_v`: maximum charging power accepted by the vehicle in kW;
+- `CompatibleClasses_v`: hazardous-goods classes allowed on the vehicle;
+- `ActivationCost_v`: cost charged once if the vehicle is used;
+- `TripCost_v`: optional dispatch or reload cost charged per trip;
+- `KmCost_v`: non-energy operating cost per km;
+- `ShiftStart_v`, `ShiftEnd_v`: vehicle or driver availability;
+- `InitialLoadTime_v`: loading time before the first trip;
+- `ReloadTime_v`: depot time before the next trip.
 
-For each directed edge `e` and hazardous-material class `k`:
+Vehicle activation cost and per-trip dispatch cost must remain separate. The heuristic must not silently charge one parameter using the other interpretation.
 
-- `Len_e`: edge length;
-- `Risk_{e,k}`: risk score;
-- `Allow_{e,k}`: 1 if edge `e` is allowed for class `k`, otherwise 0.
+The real instance must provide one row per physical vehicle or an `available_units` field that is deterministically expanded to physical `VehicleId_v` values. A vehicle-type row alone is not sufficient for activation cost or trip-overlap checks. The first toy instance may deliberately create one or more named physical vehicles from each available type.
 
-## 5. Risk and Cost Scoring
+### 4.4 Road-Edge Data
 
-The heuristic should use the same risk idea as the model. A practical edge risk score is:
+For every directed edge `e`:
+
+- `ArcId_e`;
+- `From_e`, `To_e`;
+- `Len_e`;
+- `TravelTime_e` or speed information;
+- population risk component;
+- accident risk component;
+- nature or sensitive-area component;
+- road class and tunnel category;
+- geometry or coordinates;
+- permission under the implemented ADR/tunnel rules by hazardous-goods class.
+
+### 4.5 Charging and Time Data
+
+- charging-node coordinates;
+- station charging power in kW;
+- station energy price in EUR/kWh;
+- optional station or session fee;
+- up to three rule-feasible charging-station candidates per customer;
+- directed customer-to-station and station-to-customer paths, with separate distance, time, risk, energy, and permission values;
+- depot charging power and energy price;
+- break-node eligibility;
+- planning-horizon start and end;
+- maximum continuous driving time;
+- required break duration;
+- maximum daily driving and working time;
+- maximum number of complete charging-candidate branch evaluations.
+
+The driving-time simplification must be shared with the mathematical model before final experiments.
+
+The first-version break set is:
+
+```text
+B =
+    depot
+    union charging stations
+    union customer nodes explicitly marked BreakAllowed
+```
+
+If no customer break attribute exists, customers are not assumed to be break-eligible.
+
+Every numeric input must be a finite number before construction starts. `NaN`, positive or negative infinity, invalid numeric types, and a non-integer charging-branch limit are reported as `input_data_error`.
+
+### 4.6 Input Selection and Compatibility
+
+Automatic matrix discovery is used only when exactly one regular OD matrix and
+one charger matrix are present. If several candidates exist, the caller must
+explicitly select each ambiguous input; the adapter does not silently prefer
+a Small-instance filename.
+
+A vehicle compatibility file describes the complete capability of every
+physical vehicle. It may therefore contain project-supported classes that are
+not used by the selected instance. The current supported set is:
+
+```text
+1.1D, 2, 2 (TOC), 3, 6, 8, 9
+```
+
+Every vehicle in the selected fleet must have an entry, and every class used
+by the instance must be supported by at least one vehicle.
+
+## 5. Risk, Cost, and Time Evaluation
+
+Risk, cost, and time are stored separately even when a weighted score is used.
+
+### 5.1 Risk
+
+The baseline first converts every component to a rate and then normalizes it on the same shared preprocessing graph before SCC selection or route-corridor cropping.
+
+```text
+PopulationRateRaw_e =
+    pop_per_meter
+    or population / LenMeter_e
+
+AccidentRateRaw_e =
+    acc_rate
+    or accidents / LenKm_e
+    or a verified rate field such as weighted_score or score
+
+NatureRateRaw_e =
+    nature_score, if already defined as a rate
+    or an inverse transformation of dist_to_nature_m
+```
+
+For zero-length edges, all derived rates are set to zero. A field is used directly only when its data definition confirms that it is a rate.
+
+If only a semantically unverified field such as `accident_score` is available, preprocessing stops with a clear data-definition error instead of guessing a transformation.
+
+Each component is min-max normalized once:
+
+```text
+PopulationRateNorm_e = normalize(PopulationRateRaw_e)
+AccidentRateNorm_e   = normalize(AccidentRateRaw_e)
+NatureRateNorm_e     = normalize(NatureRateRaw_e)
+```
+
+The additive edge-risk equation is:
 
 ```text
 BaseRiskRate_e =
-    0.40 * PopRate_e
-    + 0.40 * AccRate_e
-    + 0.20 * NatRate_e
+    0.40 * PopulationRateNorm_e
+    + 0.40 * AccidentRateNorm_e
+    + 0.20 * NatureRateNorm_e
 
-RiskRate_{e,k} = min(1, BaseRiskRate_e * HazardFactor_k)
-Risk_{e,k} = RiskRate_{e,k}
+RiskRate_{e,k} =
+    BaseRiskRate_e * HazardFactor_k
+
+Risk_{e,k} =
+    RiskRate_{e,k} * LenKm_e
 ```
 
-where:
+This makes path risk invariant when a road with unchanged rates is split into several edges. The implementation must test this property after edge contraction and expansion.
 
-- `PopRate_e` is the min-max normalized `pop_per_meter` value;
-- `AccRate_e` is the min-max normalized accident `score`, which the current data defines as accidents divided by the accident-edge length;
-- `NatRate_e` is `1 - minmax(dist_to_nature_m)`, so shorter distance to a protected area means higher risk;
-- `HazardFactor_k` uses the agreed class multipliers, such as `2.0` for class `1.1D`, `1.0` for class `3`, and `0.8` for class `2`.
-
-This is a simplified solver-aligned edge risk index. The current comparison version does not multiply the risk score by `Len_e`, because the mathematical model snapshot uses the normalized edge score directly. Normalization uses the complete loaded regional edge data before SCC and OD cropping. The minima, maxima, source fields, transformations, and the missing length factor are recorded in the result metadata.
-
-The variable vehicle cost on an edge can be scored as:
+The run metadata records for every component:
 
 ```text
-VC_{v,e} =
-    Len_e * km_cost_v
-    + Len_e * energy_kwh_per_km_v * energy_price_e
+source_field
+source_unit
+rate_transformation
+normalization_min
+normalization_max
+normalization_population
 ```
 
-The energy price is an explicit run parameter. For the current Berlin solver-comparison run, the heuristic can use `0.35 EUR/kWh` to match the solver snapshot.
+The same transformations and constants must be reused by the solver. The population-and-accident structure is consistent with the practical fuel-distribution risk direction in Cuneo et al. (2018).
 
-For one delivery `l`, vehicle `v`, and candidate path `p`, the heuristic uses:
+For a loaded leg:
 
 ```text
-incremental_cost(l, v, p) =
-    path_cost(v, p)
-    + FC_v
-
-assignment_score(l, v, p) =
-    w1 * path_risk(l, p) / fixed_path_risk_scale
-    + w2 * incremental_cost(l, v, p) / fixed_cost_scale
+leg_risk(k, p) =
+    sum Risk_{e,k} for all edges e in path p
 ```
 
-with:
+The first multi-customer version may keep this risk load-independent. Remaining load is still tracked so that a later version can apply a load factor without changing the route representation.
+
+The final empty return has:
 
 ```text
-path_risk(l, p) = sum Risk_{e, Class_l} for all e in p
-path_cost(v, p) = sum VC_{v,e} for all e in p
-path_length(p) = sum Len_e for all e in p
+cargo_related_hazmat_risk = 0
 ```
 
-Both scales are calculated once from the complete candidate set and then kept fixed for the whole assignment run. Ties are resolved by assignment score, path risk, incremental cost, vehicle ID, and path label. Fixed vehicle cost is charged per delivery/trip to match the current solver snapshot.
+but its distance, time, energy use, and cost remain part of the solution. Residual tank risk is outside the first-version risk model. Until cleaning is explicitly modeled, the return continues to use the implemented ADR/tunnel rules for the trip class.
 
-## 6. Phase 1: Candidate Path Generation
+### 5.2 Battery, Charging, and Cost
 
-For each delivery `l`, generate candidate paths from `O_l` to `D_l`.
-
-Before searching for paths, remove all edges that are not allowed for the delivery class:
+Battery energy is the canonical electric resource:
 
 ```text
-Allow_{e, Class_l} = 0  =>  edge e is not available
+EnergyUse_{v,e} =
+    LenKm_e * EnergyRate_v
+
+BatteryAfterLeg =
+    BatteryBeforeLeg - EnergyUse_{v,e}
+
+ChargedEnergy =
+    UsableBattery_v - BatteryBeforeCharge
+
+BatteryAfterCharge =
+    min(UsableBattery_v, BatteryBeforeCharge + ChargedEnergy)
+
+EffectiveChargingPower =
+    min(StationPower, MaxChargingPower_v)
+
+ChargingDuration =
+    ChargedEnergy / EffectiveChargingPower
+
+ChargingCost =
+    ChargedEnergy * StationEnergyPrice
+    + optional SessionFee
 ```
 
-Legal feasibility is a hard constraint. Forbidden edges are not high-cost alternatives. The current tunnel rule follows the shared A/B/C/D category matrix: classes `1.1D` and `1.5D` are forbidden in C/D tunnels, while classes `6` and `9` are forbidden in D tunnels.
+The first version assumes 100% charging efficiency and a constant `EnergyRate_v`. It does not model effects from payload, speed, gradient, weather, or temperature.
 
-The implementation supports two network modes. `full` searches the complete routing graph. `solver_cropped` first keeps the largest strongly connected component and then applies the solver OD bounding box with buffer `0.3` for each delivery. Original arc IDs are retained instead of contracting degree chains. Because cropping can remove a legal detour, this case is reported as `crop_infeasible`, not as full-network route infeasibility.
-
-Then generate a small path set, for example:
-
-- one lowest-risk path;
-- one lowest-cost or shortest path;
-- one weighted risk-cost path;
-- a few alternatives from k-shortest path logic, if available.
-
-The weighted path uses one pair of global scales for the complete run:
+The first version requires:
 
 ```text
-weighted_edge_cost(e) =
-    w1 * Risk_e / fixed_weighted_path_risk_scale
-    + w2 * Len_e / fixed_weighted_path_length_scale
+MinReserve_v <= InitialBattery_v <= UsableBattery_v
+BatteryAfterLeg >= MinReserve_v
 ```
 
-The scales are calculated once from the complete set of distance and risk candidates before weighted-path generation. They remain unchanged across all deliveries and permission masks and are recorded in the output metadata. This keeps the edge metric additive while making `w1` and `w2` meaningful across risk and distance units.
+It starts each vehicle at `InitialBattery_v` and uses full charging. `InitialBattery_v` is the state after overnight depot charging; the heuristic does not add another charging activity before the first trip. It should normally equal `UsableBattery_v` unless the input scenario deliberately specifies a lower morning state. Partial charging is not used until both methods support it.
 
-The current default is `w1 = 0.65` and `w2 = 0.35`. Both values are runtime parameters, must be non-negative, and must sum to `1.0`.
+Energy already stored in the initial battery is not free. After the final trip of each used vehicle:
 
-If variable cost differs strongly between vehicles, cost-based candidate paths can either use a vehicle-independent proxy cost or be generated separately for relevant vehicle types.
+```text
+EndOfDayRecharge_v =
+    max(0, InitialBattery_v - FinalBattery_v)
 
-Each candidate path stores:
+EndOfDayRechargeCost_v =
+    EndOfDayRecharge_v * DepotEnergyPrice
+```
 
-- edge sequence;
-- total path length;
+Station charging during the day and end-of-day depot restoration are both paid. This balances the energy consumed over the planning day without forcing an unnecessary final charging stop.
+
+In the first version, end-of-day recharge takes place outside the planning horizon. Its cost is included, but its duration does not affect shift feasibility or `total_time`. Depot charging between trips remains inside the planning horizon and uses:
+
+```text
+EffectiveDepotChargingPower_v =
+    min(DepotChargingPower, MaxChargingPower_v)
+```
+
+`KmCost_v` excludes electricity. The road operating cost is:
+
+```text
+RoadOperatingCost_{v,e} =
+    LenKm_e * KmCost_v
+```
+
+This avoids charging the same electricity once on the edge and again at the station. Total cost separates:
+
+```text
+vehicle activation cost
+trip dispatch or reload cost
+non-energy road operating cost
+station charging cost
+end-of-day depot recharge cost
+```
+
+The exact identity is:
+
+```text
+total_cost =
+    total_activation_cost
+    + total_trip_cost
+    + total_road_operating_cost
+    + total_station_charging_cost
+    + total_end_of_day_recharge_cost
+```
+
+`total_station_charging_cost` includes charging at public stations and depot charging between trips. It excludes only the separately reported end-of-day restoration cost.
+
+### 5.3 Time
+
+Trip duration includes:
+
+```text
+initial loading time before the first trip
+travel time
+customer service time
+charging time
+driver break time
+depot reload time between trips
+```
+
+For one used vehicle:
+
+```text
+FirstActivityStart_v =
+    start of loading before the first trip
+
+VehicleOperatingTime_v =
+    last_trip_return_v - FirstActivityStart_v
+```
+
+This includes waiting, reload, charging, and breaks between its first departure and final return. The objective time is:
+
+```text
+total_time =
+    sum VehicleOperatingTime_v for all used vehicles
+```
+
+The latest vehicle return, or makespan, is exported separately and is not used as `total_time`.
+
+### 5.4 Combined Score
+
+The heuristic evaluates a solution with:
+
+```text
+objective =
+    w_risk * total_risk / fixed_risk_scale
+    + w_cost * total_cost / fixed_cost_scale
+    + w_time * total_time / fixed_time_scale
+```
+
+All scales are calculated once for an instance and remain fixed during construction and VNS.
+
+For every customer `c`, first generate the set `SingleTrip_c` of feasible single-customer reference trips:
+
+```text
+Depot -> c -> Depot
+```
+
+These trips use compatible physical vehicles, rule-feasible paths, required charging, loading, service time, and the same evaluator as the heuristic. First calculate:
+
+```text
+epsilon = 1e-9
+
+reference_risk =
+    sum min_risk(t) for t in SingleTrip_c over all c
+
+reference_cost =
+    sum min_cost(t) for t in SingleTrip_c over all c
+
+reference_time =
+    sum min_duration(t) for t in SingleTrip_c over all c
+
+fixed_risk_scale =
+    reference_risk if reference_risk > epsilon else 1.0
+
+fixed_cost_scale =
+    reference_cost if reference_cost > epsilon else 1.0
+
+fixed_time_scale =
+    reference_time if reference_time > epsilon else 1.0
+```
+
+Each minimum is calculated independently. The reference cost includes road operating, charging, trip, and one activation cost for its selected vehicle. The scales are reference magnitudes, not bounds. Their values and the selected reference trips are exported and reused by the solver comparison.
+
+If `reference_risk <= epsilon`, risk is inactive for that instance and this fact is recorded in metadata. The fallback value prevents division by zero; it does not replace a positive risk scale below 1.
+
+If `SingleTrip_c` is empty, customer `c` is individually infeasible and construction does not start until the reason is reported.
+
+The default experiment uses:
+
+```text
+w_risk = 0.50
+w_cost = 0.30
+w_time = 0.20
+```
+
+The Small instance additionally uses `(0.30, 0.50, 0.20)` to examine
+the risk-cost trade-off while keeping the time weight fixed. Medium and
+Large use only the default weights for the scalability experiments.
+
+## 6. Road-Path Preprocessing
+
+### 6.1 Mapping
+
+Map the depot, customers, charging stations, and approved break nodes to eligible road-network nodes.
+
+The maximum mapping distance is:
+
+```text
+max_mapping_distance_m = 1000
+```
+
+A location outside this hard threshold is reported as:
+
+```text
+mapping_infeasible
+```
+
+KDTree mapping may be used for performance, but nearest-node lookup does not replace the threshold check.
+
+### 6.2 Apply Implemented Road Rules First
+
+For each hazardous-goods class:
+
+1. remove forbidden tunnel and ADR edges;
+2. apply the agreed highway preference or penalty;
+3. build the class-specific permitted graph;
+4. generate path alternatives on that graph.
+
+An ordinary shortest-path corridor must not be cropped first and restricted afterward. That order can remove the only permitted detour.
+
+In this document, "legal" means feasible under the implemented ADR/tunnel and project rules. It is not a claim of complete legal compliance with every substance-, quantity-, vehicle-, and exemption-specific ADR provision.
+
+### 6.3 Pairwise Candidate Paths
+
+Generate paths for all required ordered stop pairs:
+
+```text
+depot -> customer
+customer -> customer
+customer -> depot
+customer -> candidate charging station
+candidate charging station -> the same customer
+```
+
+For the Small and Medium instances, each customer keeps at most its three nearest charging stations by rule-feasible road distance. Straight-line distance may shortlist stations, but it does not determine final feasibility or rank. The two charging paths are stored separately because one-way roads and direction-specific restrictions can make them different.
+
+Candidate profiles may include:
+
+- shortest or lowest-cost path;
+- lowest-risk path;
+- weighted risk-cost path;
+- one or more rule-feasible alternatives.
+
+Loaded paths use class-specific restrictions and risk. The final empty return uses the same implemented class restrictions in the first version, but its cargo-related risk is zero.
+
+### 6.4 Network Reduction
+
+Large-network preprocessing may use:
+
+- chunked edge loading;
+- a depot-containing reachable component;
+- degree-chain contraction;
+- rule-feasible path corridors;
+- path caching.
+
+Before component filtering, verify for each mapped customer that:
+
+- the customer is reachable from the depot on its class-specific graph;
+- the depot is reachable from the customer under the first-version return rules.
+
+If either check fails, report `no_legal_path`. Do not silently remap the customer to another node to keep it in a selected component.
+
+Only after these checks may a depot-containing component be retained. Charging and break nodes are kept only when they are reachable and useful for at least one required relation.
+
+Contraction must preserve direction, original arc IDs, geometry, length, time, risk, energy, and implemented permission. Depot, customer, charging, and break nodes must be protected before contraction.
+
+If no path satisfying the implemented rules exists after successful mapping, report:
+
+```text
+no_legal_path
+```
+
+Do not create a selectable dummy arc with an artificial large distance.
+
+## 7. Sequential Route Construction
+
+### 7.1 State
+
+For every vehicle:
+
+```text
+current_location
+available_time
+completed_trips
+current_hazard_class
+daily_driving_time
+daily_working_time
+```
+
+For every trip:
+
+```text
+vehicle_id
+trip_id
+hazard_class
+stop_sequence
+start_time
+return_time
+initial_load
+remaining_load_at_each_stop
+battery_at_each_stop
+arrival_and_departure_times
+selected_path_for_each_leg
+risk
+cost
+time
+```
+
+### 7.2 Initial Trips
+
+Start with no active trip and all customers in `unserved_customers`.
+
+Select an available vehicle and create:
+
+```text
+[Depot, Depot]
+```
+
+The vehicle and trip hazardous-goods class are determined by the first accepted customer.
+
+Before the first departure, add `InitialLoadTime_v`. If no separate value is available, the first version sets:
+
+```text
+InitialLoadTime_v = ReloadTime_v
+```
+
+### 7.3 Candidate Insertion
+
+For each unserved customer and compatible vehicle-trip:
+
+1. test the allowed insertion positions;
+2. select rule-feasible path alternatives for the two affected legs;
+3. update initial and remaining payload;
+4. simulate arrival, service, charging, break, and return times;
+5. simulate battery consumption;
+6. calculate the change in risk, cost, and time;
+7. reject any infeasible insertion.
+
+The insertion metric is:
+
+```text
+insertion_score =
+    w_risk * delta_risk / fixed_risk_scale
+    + w_cost * delta_cost / fixed_cost_scale
+    + w_time * delta_time / fixed_time_scale
+```
+
+Within the current trip, choose the feasible insertion with the lowest score.
+When a new trip is seeded, the optional `regret_2` variant first groups the
+vehicle candidates by customer. A customer with only one feasible vehicle
+candidate has highest priority. Otherwise:
+
+```text
+regret_2(c) =
+    second_best_insertion_score(c)
+    - best_insertion_score(c)
+```
+
+The customer with the largest regret seeds the new trip using its best
+vehicle candidate. This reserves scarce vehicle, time, and compatibility
+options before easier customers consume them. Once that trip is open, ordinary
+best insertion extends it; the number of feasible positions inside one trip is
+not treated as vehicle scarcity.
+
+Candidate ties are resolved deterministically by:
+
+```text
+insertion_score
+-> delta_risk
+-> delta_cost
+-> delta_time
+-> vehicle_id
+-> trip_id
+-> customer_id
+-> insertion_position
+-> path_id
+```
+
+The optional `hardest_first` seed rule selects the customer whose best
+feasible new-trip candidate has the largest incremental operating time. It is
+useful when long-distance customers would otherwise remain until the fleet
+has too little time for them. Trip extension still uses the ordinary minimum
+insertion score.
+
+### 7.4 Closing and Reusing a Vehicle
+
+When no further customer can be inserted:
+
+1. close the trip with a feasible return to the depot;
+2. record its return time;
+3. add depot reload time;
+4. add any required depot charging time;
+5. update `vehicle.available_time`;
+6. start another trip if the shift and daily limits allow it.
+
+Start a new trip with any available compatible physical vehicle, including a vehicle whose previous trip has already finished. If no feasible option exists, report the customer and the exact infeasibility reason.
+
+For an insertion into an existing trip, `delta_cost` includes the changed trip costs and the resulting change in end-of-day recharge cost. For a new trip, it also includes `TripCost_v`; `ActivationCost_v` is added only when the physical vehicle has not been used earlier in the solution.
+
+### 7.5 Bounded Ejection Repair
+
+If construction leaves customers unserved, apply a deterministic depth-one
+repair before VND:
+
+1. temporarily remove one served customer;
+2. insert one unserved customer into any feasible trip position or new trip;
+3. reinsert the removed customer into any feasible position or new trip;
+4. accept the exchange only if both customers are served and the total number
+   of served customers increases by one.
+
+The search uses the same schedule evaluator and fixed objective scales as
+construction. Candidate and time limits are reported explicitly. A limit
+result is `search_limit_reached`, not proof that no feasible repair exists.
+Each repair result also stores the configured limits and one stop reason:
+`completed`, `candidate_limit`, `time_limit`,
+`charging_search_incomplete`, or `initial_solution_infeasible`. These fields
+are included in the text summary and warm-start metadata so experiment runs
+can be reproduced.
+
+### 7.6 Limited Depth-Two Repair
+
+If depth-one repair cannot complete a nearly feasible solution, a bounded
+depth-two step may temporarily remove two served customers. The unserved
+customer replaces one of their positions, after which both removed customers
+are reinserted in both possible orders. Only a fixed number of the best
+primary candidates is continued, and the same candidate and time limits
+remain active. This is an optional diagnostic repair, not part of the default
+Small/Medium baseline.
+
+Within the active limits, feasible completions from both reinsertion orders
+are compared by objective, risk, cost, time, and the deterministic schedule
+key. Invalid construction or depth-one input is preserved as
+`initial_solution_infeasible` and is never reinterpreted as a repairable
+partial schedule.
+
+## 8. Charging and Schedule Feasibility
+
+### 8.1 Charging Repair
+
+Charging repair is tested when the next leg would violate either the battery reserve or the continuous-driving limit. It is also tested proactively by propagating feasible battery, time, and driving states over all remaining ordered stops. Dominated states with no more battery and no better time resources are removed. The shared first-version charging model uses a restricted side-trip:
+
+```text
+Customer i
+-> Charging station h
+-> Customer i
+-> next stop j
+```
+
+The vehicle must return to the customer from which the charging detour started. It cannot continue directly from the station to the next customer. This restriction reduces the charging matrix but may exclude a better unrestricted EV route.
+
+For each repair:
+
+1. identify the customer before the infeasible leg;
+2. test all available candidates among that customer's three stations;
+3. evaluate both directed paths of the side-trip;
+4. add charging time, cost, and any qualifying driver break;
+5. return to the same customer without repeating delivery or service;
+6. rebuild the rest of the schedule;
+7. choose the feasible station with the smallest objective increase.
+
+The initial version charges to `UsableBattery_v`. Duration and cost are calculated from charged energy, station power, and station price as defined in Section 5.2. Partial charging is a later extension unless the solver adopts it as well.
+
+If undelivered cargo remains after service at `Customer i`, both side-trip legs remain loaded and receive cargo-related HazMat risk. If no cargo remains, both legs are empty. Returning to the customer is a technical revisit: it does not reset capacity, reload the vehicle, repeat service, or increase the served-customer count.
+
+The same departure transition checks driver-break feasibility for ordinary travel, departure to a station, and departure after the technical revisit. Charging search is bounded separately for each top-level schedule evaluation by `MaxChargingBranchEvaluations`; rejected construction proposals do not consume the budget of later proposals. If untested station states remain when the limit is reached, the result is `charging_search_incomplete`, not ordinary route infeasibility. The final-schedule branch count is exported with the result.
+
+State propagation preserves the complete set of failure causes across the non-dominated frontier. If any state still has a battery or break failure, the previous customer receives a proactive charging test even when another state fails for time or shift. Only after those repair options fail is the best unavoidable structural, time-window, shift, or daily-limit reason reported. Adding an unused legal charging candidate must therefore not turn a feasible route into an infeasible route.
+
+### 8.2 Schedule Simulation
+
+A single schedule evaluator must be used during construction and VNS. It updates:
+
+```text
+arrival time
+waiting time
+service time
+departure time
+continuous driving time
+break time
+battery
+remaining payload
+trip return time
+daily driving and working time
+```
+
+Breaks may only occur at a stop that the trip actually visits and that is allowed for a break.
+
+When a charging stop is also break-eligible and the break is long enough to qualify:
+
+```text
+stop_duration =
+    max(charging_duration, qualifying_break_duration)
+```
+
+The first version therefore allows charging and a driver break to overlap. Customer service, loading, and reloading do not overlap with a driver break.
+
+## 9. Variable Neighborhood Descent and Search
+
+The construction phase provides a feasible solution. The implemented toy milestone first applies deterministic best-improvement VND. VNS shaking remains the next improvement stage.
+
+### Relocate
+
+Move one customer to another position in the same trip or to a compatible trip.
+
+### Swap
+
+Exchange two customers in the same trip or between two compatible trips.
+
+### 2-opt
+
+Reverse a customer subsequence within one trip and rebuild its path and schedule.
+
+### Trip Reassignment
+
+Assign a complete trip to another compatible vehicle.
+
+### Path Change
+
+Replace one leg path with another rule-feasible candidate path.
+
+### Charging-Stop Change
+
+Insert, remove, or replace a charging station.
+
+Every move is evaluated by the same feasibility and objective functions used during construction.
+
+The toy schedule explicitly stores customer sequences and trips. It therefore implements six schedule neighborhoods. A path change is not yet a separate move because the toy has one leg per OD pair. Charging choices are rebuilt automatically by the schedule evaluator for every candidate, so charging alternatives are already reconsidered without storing a charging stop in the move itself. Explicit path and charging-stop neighborhoods become useful when the real-data representation exposes several alternatives.
+
+Inter-trip relocate inserts a customer only into an existing trip. It does not create a new single-customer trip or activate an unused vehicle. The current toy can activate an unused vehicle only by reassigning a complete trip. This restricted neighborhood keeps the first VND small but can exclude improvements that require splitting a trip.
+
+### Reproducible VND Configuration
+
+The implemented VND uses:
+
+```text
+acceptance = strict improvement greater than 1e-9
+local_search = best-improvement VND
+equal_solution_acceptance = false
+max_neighborhood_passes = 1000
+```
+
+The fixed VND neighborhood order is:
+
+```text
+1. intra-trip relocate
+2. intra-trip 2-opt
+3. intra-trip swap
+4. inter-trip relocate
+5. inter-trip swap
+6. trip reassignment
+```
+
+Each neighborhood evaluates all unique candidate schedules and selects its deterministic best strict improvement. Ties are resolved by objective, risk, cost, time, complete schedule, and move description. After an improving move, VND restarts at neighborhood 1.
+
+VND stops when a complete neighborhood cycle finds no improvement or the neighborhood-pass limit is reached. A candidate rejected with `charging_search_incomplete` is not treated as proven infeasible. If a complete cycle contains such a candidate and accepts no later improvement, the final status is `search_limit_reached`, while the feasible incumbent is retained. Accepting a move clears incomplete-search evidence from the previous cycle because the incumbent and its neighborhoods have changed.
+
+When VND is nested inside VNS, it receives the same absolute monotonic deadline. VND checks it before every candidate evaluation and between neighborhood passes. A candidate evaluation that has already started may finish, but no further candidate is started after expiry. The best accepted feasible incumbent is returned with `time_limit_reached`.
+
+The result reports the initial and final objective, accepted moves, evaluated candidate count, unresolved incomplete candidate count and neighborhoods, neighborhood passes, and runtime.
+
+### Reproducible VNS Shaking
+
+The implemented Basic VNS starts from the VND result. It selects one unique schedule move at random from the current neighborhood, rebuilds charging and the complete schedule through the shared evaluator, and runs VND from every feasible shaken solution. A locally improved shaken solution replaces the incumbent only when its objective is better by more than `1e-9`; the search then restarts at the first neighborhood. Otherwise it continues with the next neighborhood.
+
+The configuration is:
+
+```text
+random_seed = 42
+max_vns_iterations = 1000
+max_vns_seconds = 60
+max_vnd_neighborhood_passes = 1000
+```
+
+VNS computes one absolute monotonic deadline at startup. It checks that deadline after candidate generation, immediately after the atomic shake evaluation, and after nested VND. The same deadline is passed into VND. VNS therefore never starts nested local search after the shared budget has expired, although an atomic evaluation already in progress may finish.
+
+VNS stops after a complete neighborhood cycle without an accepted basin improvement, or when the iteration or runtime limit is reached. `neighborhoods_exhausted` does not claim global optimality. Search-incomplete shake evaluations and bounded VND runs are retained for the current incumbent. This includes an initial VND ending with a charging-search, iteration, or time limit; when it has no specific neighborhood diagnosis, the result records `initial_vnd`. If the final completed cycle contains unresolved evidence, the status is `search_limit_reached`. Accepting a fully searched new incumbent clears evidence from the previous cycle.
+
+Seed 42 is used for deterministic debugging and the standard demonstration. Final stochastic experiments use at least:
+
+```text
+experiment_seeds = [11, 23, 42, 67, 89]
+```
+
+Ten fixed seeds are preferred when runtime permits. Report best objective, mean objective, objective standard deviation, mean runtime, and number of feasible runs. Solver-gap comparison uses the best feasible heuristic result, while mean and standard deviation describe robustness.
+
+## 10. Feasibility Checks
+
+A solution is feasible only if:
+
+- every customer order is served exactly once;
+- every active trip starts and ends at the depot;
+- every selected road path is connected and feasible under the implemented ADR/tunnel rules;
+- no trip mixes incompatible hazardous goods;
+- the assigned physical vehicle is compatible with the trip class;
+- total trip demand does not exceed vehicle capacity;
+- payload decreases after each delivery and resets only at the depot;
+- customer time windows and service times are respected;
+- battery never falls below `MinReserve_v` after any edge or leg, on arrival at a charging station, or on the final depot return;
+- charging occurs only at visited charging nodes;
+- trips assigned to one vehicle do not overlap;
+- reload, charging, and break times are included;
+- shift, daily driving, and daily working limits are respected;
+- risk, cost, and time totals equal the selected trips and paths.
+
+Infeasibility should be reported with a specific status:
+
+```text
+mapping_infeasible
+no_legal_path
+capacity_infeasible
+commodity_incompatible
+charging_infeasible
+charging_search_incomplete
+time_window_infeasible
+shift_infeasible
+input_data_error
+```
+
+The overall run status is one of:
+
+```text
+feasible
+infeasible
+partial_infeasible
+search_limit_reached
+input_data_error
+```
+
+`partial_infeasible` means that construction produced trips but left at least one customer unserved. It must never be reported or compared as a feasible solution.
+
+For every unserved customer, the result keeps distinct rejection reasons from both new-trip seed tests and all insertion positions. Stale insertion diagnostics are cleared as soon as any feasible insertion or new-trip seed candidate is found for that customer, even if a different candidate is selected in that round, and again when the customer is served. If any still-relevant rejection contains `charging_search_incomplete`, the run status is `search_limit_reached` rather than `partial_infeasible`. Completed trips retain their matching metrics, including end-of-day energy restoration.
+
+`input_data_error` means that preprocessing cannot safely interpret a required field, unit, transformation, or parameter. It is not a routing infeasibility.
+
+`search_limit_reached` means that the bounded heuristic did not inspect every required charging continuation. It must not be interpreted as proof that no feasible route exists.
+
+## 11. Output
+
+The target output consists of three main files.
+
+### Run Summary
+
+```text
+status
+objective_weights_and_scales
+normalized_objective_value
+total_risk
+total_activation_cost
+total_trip_cost
+total_road_operating_cost
+total_station_charging_cost
+total_end_of_day_recharge_cost
+total_cost
+total_distance
+total_travel_time
+total_service_time
+total_charging_time
+total_waiting_time
+total_break_time
+total_time
+makespan
+final_battery_by_vehicle
+end_of_day_recharge_by_vehicle
+vehicles_used
+trips_used
+served_and_unserved_customers
+normalization_and_risk_metadata
+construction_strategy_from_the_actual_run
+runtime_breakdown
+charging_branch_evaluations
+vnd_initial_and_final_objective
+vnd_accepted_moves
+vnd_evaluated_candidates
+vnd_incomplete_candidates_and_neighborhoods
+vnd_neighborhood_passes
+vns_random_seed_and_status
+vns_iterations_and_accepted_improvements
+vns_shake_and_nested_vnd_statistics
+vns_incomplete_search_diagnostics
+repair_status_moves_candidates_and_runtime
+```
+
+### Selected Trips and Stops
+
+```text
+vehicle_id
+trip_id
+hazard_class
+stop_sequence
+stop_type
+arrival_time
+departure_time
+delivered_quantity
+remaining_load
+battery_before_and_after
+charging_or_break_duration
+trip_start_and_return_time
+final_vehicle_battery
+```
+
+`stop_sequence` preserves charging stations and technical customer revisits, for example `Customer i -> Station h -> Customer i`. A customer-order-only sequence is insufficient for checking battery, time, risk, and cost.
+
+### Solver Warm Start
+
+The formal solver-facing object is:
+
+```python
+heuristic_routes = {
+    "MAN_eTGX": ["DEPOT", "C1", "C2", "DEPOT"],
+}
+```
+
+Its key is the solver's unique physical-vehicle name (`solver_name`, falling back to vehicle type). Its list contains only customers and depot nodes because the current solver creates warm-start arc variables only for those nodes. Several trips by one vehicle are flattened with an intermediate `DEPOT`. Charging stations and technical revisits remain in the full selected-stop output and are not discarded from heuristic evaluation.
+
+### Selected Legs or Edges
+
+```text
+vehicle_id
+trip_id
+from_stop
+to_stop
+path_id
+edge_or_arc_sequence
+distance
+time
+risk
+cost
+energy
+implemented_rules_feasible
+load_state
+```
+
+The map is a presentation layer derived from these outputs, not a separate source of result values.
+
+## 12. Solver Comparison
+
+Solver and heuristic results are comparable only when they use:
+
+- the same physical vehicles and customer orders;
+- the same quantity conversion;
+- the same road paths or pairwise path table;
+- the same risk fields, normalization, and hazardous-goods factors;
+- the same fixed, trip, variable, energy, and charging costs;
+- the same time, battery, compatibility, and charging rules;
+- the same objective weights and scales.
+
+Compare:
+
+- feasibility and unserved customers;
 - total risk;
-- total variable cost per vehicle;
-- feasible vehicles based on range.
+- total cost and its components;
+- total distance and time;
+- vehicles and trips used;
+- charging decisions;
+- algorithm runtime;
+- end-to-end runtime;
+- solver objective, best bound, and gap when available.
 
-If no permitted path exists for a delivery, the heuristic marks the instance as infeasible.
-
-## 7. Phase 2: Initial Vehicle Assignment
-
-After candidate paths are generated, deliveries are assigned to vehicles.
-
-Deliveries should be processed in a priority order so that difficult cases are handled early:
-
-```text
-priority_l =
-    normalized_demand_l
-    + normalized_min_path_length_l
-    + normalized_min_path_risk_l
-    + penalty_if_few_feasible_vehicles
-```
-
-For each delivery in this order:
-
-1. test all candidate paths;
-2. test all vehicles;
-3. keep only combinations where:
-   - `Dem_l <= Cap_v` for this independent delivery;
-   - `path_length(p) <= Range_v`;
-   - all path edges are allowed for `Class_l`;
-4. choose the feasible path-vehicle combination with the lowest incremental score.
-
-If no feasible combination exists, the heuristic returns infeasible for the current instance.
-
-## 8. Phase 3: Local Search Improvement
-
-The initial solution is feasible, but not necessarily good. Local search tries small changes and accepts them only if they improve the score and keep all constraints feasible.
-
-These moves are chosen because they directly match the two decisions of the heuristic: path selection and vehicle assignment.
-
-### Alternative Path Switch
-
-For one delivery, replace the current path with another candidate path.
-
-This can reduce risk or cost without changing the assigned vehicle.
-
-The move is accepted only if the new path is connected from `O_l` to `D_l`, all edges are legally allowed, range remains feasible, and risk and cost are recomputed.
-
-### Vehicle Reassignment
-
-Move one delivery from its current vehicle to another vehicle.
-
-This can reduce cost or avoid using an additional vehicle. The move is accepted only if the target vehicle can carry the delivery and cover the selected path length.
-
-After the move, per-delivery capacity, range feasibility, vehicle activation, fixed cost, total risk, and total cost are updated.
-
-### Assignment Swap
-
-Swap the assigned vehicles of two deliveries.
-
-This can help when two single reassignments are infeasible separately, but feasible together.
-
-The swap is accepted only if both vehicles remain feasible after the exchange.
-
-### Combined Path-and-Vehicle Change
-
-Change both the path and the vehicle for one delivery.
-
-This is useful when a safer path is longer and therefore needs a vehicle with a larger range.
-
-This move is accepted only after checking path permission, path connectivity, vehicle capacity, range, trip fixed cost, and the updated objective value.
-
-## 9. Feasibility Checks
-
-The heuristic must validate the solution after construction and after local search.
-
-Checks:
-
-- every delivery has exactly one selected path;
-- every delivery is assigned to exactly one vehicle;
-- every selected path connects `O_l` to `D_l`;
-- no selected edge violates `Allow_{e, Class_l}`;
-- vehicle capacity is respected:
-
-```text
-Dem_l <= Cap_v
-```
-
-Each delivery is an independent one-way OD task. The vehicle unloads at `D_l`, after which its payload capacity is available for another delivery. The current heuristic does not schedule when deliveries occur, model repositioning between tasks, or add a return path.
-
-- battery range is respected:
-
-```text
-path_length_l <= Range_v
-```
-
-- fixed cost is counted once for each selected delivery/trip;
-- total risk and total cost are recomputed from the selected paths.
-
-Charging stops are not included in the first heuristic version. A path is feasible only if its total length fits within the assigned vehicle range. This keeps the first implementation focused on path selection and vehicle assignment, while leaving charging decisions as a later extension.
-
-## 10. Output
-
-The heuristic should return:
-
-- selected path for each delivery;
-- assigned vehicle for each delivery;
-- active vehicles;
-- capacity feasibility per delivery;
-- mapping status and coordinate-to-node distance;
-- path length per delivery;
-- risk per delivery;
-- variable cost per delivery;
-- fixed vehicle cost;
-- risk normalization metadata and assignment scales;
-- total risk;
-- total cost;
-- normalized objective value;
-- feasibility status;
-- data-preparation, network-preprocessing, mapping, candidate-generation, vehicle-assignment, export, algorithm, and end-to-end runtime;
-- network mode, crop buffer, cropped edge counts, hazard factors, and active risk components.
-
-The CSV/JSON files and solver-style text report prepare a later comparison:
-
-- selected edges correspond to routing decisions;
-- vehicle assignments correspond to assignment decisions;
-- active vehicles are reported as used vehicle types, while fixed cost is charged per selected delivery/trip.
-
-## 11. Solver Comparison
-
-The heuristic should be compared with the solver on the same instances and the same objective interpretation. Solver-style formatting alone does not make the objective values directly comparable.
-
-Useful metrics:
-
-- feasibility status;
-- total normalized objective;
-- total risk;
-- total transport cost;
-- fixed cost and variable cost separately;
-- runtime;
-- active vehicles;
-- capacity usage;
-- solver status;
-- solver bound or gap, if available;
-- heuristic gap compared with the solver objective or bound, but only after both methods share the same evaluator and feasible network.
-
-If the solver proves optimality on the same network and both results use the same objective definition:
+If the solver proves optimality under the same evaluator:
 
 ```text
 heuristic_gap_percent =
@@ -318,61 +1044,136 @@ heuristic_gap_percent =
     * 100
 ```
 
-One important detail: the heuristic should calculate cost from the selected path edges. If the solver uses an approximation for variable cost, the comparison table should make clear which cost definition is used.
+Current independent-OD solver outputs are not a valid quality benchmark for this multi-customer heuristic.
 
-## 12. Pseudocode
+## 13. Pseudocode
 
 ```text
 Input:
-    vehicles V, deliveries L, nodes N, edges E,
-    demand Dem_l, class Class_l, origins O_l, destinations D_l,
-    risk Risk_{e,k}, permission Allow_{e,k},
-    edge length Len_e, range Range_v, capacity Cap_v,
-    fixed cost FC_v, variable cost VC_{v,e},
-    weights w1 and w2
+    physical vehicles V
+    customer orders C
+    depot, charging stations, road graph
+    risk, permission, cost, time, and energy data
+    objective weights
 
-For each delivery l:
-    remove edges where Allow_{e, Class_l} = 0
-    generate candidate paths from O_l to D_l
-    calculate risk, length, and cost for each path
-    if no candidate path exists:
-        return infeasible
+Validate input:
+    verify required fields, units, source semantics, and physical fleet
+    if a required definition is missing or ambiguous:
+        return input_data_error
 
-Sort deliveries:
-    high demand, long path, high risk, few feasible vehicles first
+Preprocess:
+    map all relevant locations with a hard distance threshold
+    for each hazardous-goods class:
+        remove forbidden road edges
+        generate rule-feasible pairwise path alternatives
+    generate empty-return alternatives
+    generate feasible single-customer reference trips
+    calculate fixed risk, cost, and time scales once
 
-Construct initial solution:
-    for each delivery l:
-        test candidate path and vehicle combinations
-        keep combinations satisfying capacity, range, and permission checks
-        choose the lowest incremental score
-        assign delivery to path and vehicle
-        update vehicle activation
+Initialize:
+    unserved_customers = C
+    solution = no trips
+    initialize each vehicle at the depot and shift start
+    schedule initial loading before the first trip of a used vehicle
 
-Improve solution:
-    repeat:
-        try path switch
-        try vehicle reassignment
-        try assignment swap
-        try combined path-and-vehicle change
-        accept only feasible improving moves
-    until no improvement or limit reached
+Construct:
+    while unserved_customers is not empty:
+        seed_candidates = []
 
-Validate:
-    check path connectivity, assignment, permissions, capacity, range, risk, cost
+        for each vehicle that can start another trip:
+            for each compatible unserved customer:
+                create a temporary depot-to-customer-to-depot trip
+                simulate load, battery, time, breaks, and depot return
+                if feasible:
+                    calculate insertion score
+                    add seed candidate
 
-Output:
-    paths, vehicle assignments, active vehicles,
-    risk, cost, objective, runtime, feasibility status
+        if seed_candidates is empty:
+            return partial solution with explicit infeasibility reasons
+
+        select a seed by best insertion or regret-2
+        current_trip = selected depot-to-customer-to-depot trip
+        remove its customer from unserved_customers
+
+        repeat:
+            insertion_candidates = []
+
+            for each compatible unserved customer:
+                for each allowed position in current_trip:
+                    rebuild affected paths
+                    simulate load, battery, time, breaks, and depot return
+                    if feasible:
+                        calculate insertion score
+                        add insertion candidate
+
+            if insertion_candidates is empty:
+                break
+
+            accept the deterministic minimum insertion candidate
+            update current_trip
+            remove its customer from unserved_customers
+
+        finalize current_trip
+        append it to the selected vehicle
+        update vehicle availability and daily resource use
+
+Improve with VND:
+    current_solution = constructed solution
+    neighborhood = first schedule neighborhood
+
+    while a neighborhood remains and the pass limit is not reached:
+        generate all unique schedules in the current neighborhood
+        evaluate each schedule with the shared feasibility function
+        keep the deterministic best strict improvement
+
+        if an improvement exists:
+            accept it
+            restart at the first neighborhood
+        else:
+            continue with the next neighborhood
+
+Improve with VNS:
+    best_solution = VND result
+    neighborhood = first schedule neighborhood
+    initialize a private random generator with the experiment seed
+
+    while a neighborhood remains and no limit is reached:
+        select one unique random shake from the current neighborhood
+        rebuild charging and evaluate the complete shaken schedule
+        stop before VND if the shared deadline has expired
+
+        if the shaken schedule is feasible:
+            run VND from the shaken schedule with the same deadline
+
+            if the local result strictly improves best_solution:
+                accept it
+                restart at the first neighborhood
+                continue
+
+        record any incomplete search evidence
+        continue with the next neighborhood
+
+Validate and export:
+    calculate final battery for every used vehicle
+    calculate end-of-day recharge energy and cost
+    validate every customer, trip, vehicle, path, resource, and total
+    export summary, trips/stops, legs/edges, runtimes, and metadata
 ```
 
-## 13. Dependencies and Next Steps
+## 14. Implementation Order
 
-Implementation depends on a few project decisions becoming stable:
+The multi-customer toy now covers data structures, shared schedule evaluation, sequential insertion, multi-trip reuse, charging repair, deterministic VND, and reproducible Basic VNS. The remaining implementation order is:
 
-- finalized data format for nodes, edges, deliveries, vehicles, risks, and permissions;
-- final objective weights `w1` and `w2`;
-- solver output format for comparing selected edges, vehicle assignments, active vehicles, objective value, risk, and cost;
-- small, medium, and large test instances.
+1. expose explicit path and charging-stop moves when the real-data representation supports alternatives;
+2. connect the existing Berlin road-path layer;
+3. connect Germany data only after Small and Medium instances are reproducible;
+4. compare with a solver that implements the same multi-customer and multi-trip model.
 
-The next practical steps are to finalize the shared risk and energy-price definitions, add charging-stop decisions for long routes, and run systematic solver-versus-heuristic experiments.
+## 15. References Used for the Heuristic
+
+- Zografos, K. G., and Androutsopoulos, K. N. (2004). "A heuristic algorithm for solving hazardous materials distribution problems." European Journal of Operational Research, 152(2), 507-519. https://doi.org/10.1016/S0377-2217(03)00041-9
+- Androutsopoulos, K. N., and Zografos, K. G. (2012). "A bi-objective time-dependent vehicle routing and scheduling problem for hazardous materials distribution." EURO Journal on Transportation and Logistics, 1, 157-183. https://doi.org/10.1007/s13676-012-0004-y
+- Bula, G. A., Prodhon, C., Gonzalez, F. A., Afsar, H. M., and Velasco, N. (2017). "Variable neighborhood search to solve the vehicle routing problem for hazardous materials transportation." Journal of Hazardous Materials, 324, 472-480. https://doi.org/10.1016/j.jhazmat.2016.11.015
+- Cattaruzza, D., Absi, N., Feillet, D., and Vigo, D. (2014). "An iterated local search for the multi-commodity multi-trip vehicle routing problem with time windows." Computers & Operations Research, 51, 257-267. https://doi.org/10.1016/j.cor.2014.06.006
+- Schneider, M., Stenger, A., and Goeke, D. (2014). "The Electric Vehicle-Routing Problem with Time Windows and Recharging Stations." Transportation Science, 48(4), 500-520. https://doi.org/10.1287/trsc.2013.0490
+- Cuneo, V., Nigro, M., Carrese, S., Ardito, C. F., and Corman, F. (2018). "Risk based, multi objective vehicle routing problem for hazardous materials: A test case in downstream fuel logistics." Transportation Research Procedia, 30, 43-52. https://doi.org/10.1016/j.trpro.2018.09.006
