@@ -185,6 +185,24 @@ If no customer break attribute exists, customers are not assumed to be break-eli
 
 Every numeric input must be a finite number before construction starts. `NaN`, positive or negative infinity, invalid numeric types, and a non-integer charging-branch limit are reported as `input_data_error`.
 
+### 4.6 Input Selection and Compatibility
+
+Automatic matrix discovery is used only when exactly one regular OD matrix and
+one charger matrix are present. If several candidates exist, the caller must
+explicitly select each ambiguous input; the adapter does not silently prefer
+a Small-instance filename.
+
+A vehicle compatibility file describes the complete capability of every
+physical vehicle. It may therefore contain project-supported classes that are
+not used by the selected instance. The current supported set is:
+
+```text
+1.1D, 2, 2 (TOC), 3, 6, 8, 9
+```
+
+Every vehicle in the selected fleet must have an entry, and every class used
+by the instance must be supported by at least one vehicle.
+
 ## 5. Risk, Cost, and Time Evaluation
 
 Risk, cost, and time are stored separately even when a weighted score is used.
@@ -436,15 +454,17 @@ If `reference_risk <= epsilon`, risk is inactive for that instance and this fact
 
 If `SingleTrip_c` is empty, customer `c` is individually infeasible and construction does not start until the reason is reported.
 
-The first comparison can retain:
+The default experiment uses:
 
 ```text
-w_risk = 0.65
-w_cost = 0.35
-w_time = 0.00
+w_risk = 0.50
+w_cost = 0.30
+w_time = 0.20
 ```
 
-Time remains a hard feasibility resource and a reported metric when `w_time = 0`.
+The Small instance additionally uses `(0.30, 0.50, 0.20)` to examine
+the risk-cost trade-off while keeping the time weight fixed. Medium and
+Large use only the default weights for the scalability experiments.
 
 ## 6. Road-Path Preprocessing
 
@@ -604,7 +624,24 @@ insertion_score =
     + w_time * delta_time / fixed_time_scale
 ```
 
-Choose the feasible insertion with the lowest score. Ties are resolved deterministically by:
+Within the current trip, choose the feasible insertion with the lowest score.
+When a new trip is seeded, the optional `regret_2` variant first groups the
+vehicle candidates by customer. A customer with only one feasible vehicle
+candidate has highest priority. Otherwise:
+
+```text
+regret_2(c) =
+    second_best_insertion_score(c)
+    - best_insertion_score(c)
+```
+
+The customer with the largest regret seeds the new trip using its best
+vehicle candidate. This reserves scarce vehicle, time, and compatibility
+options before easier customers consume them. Once that trip is open, ordinary
+best insertion extends it; the number of feasible positions inside one trip is
+not treated as vehicle scarcity.
+
+Candidate ties are resolved deterministically by:
 
 ```text
 insertion_score
@@ -617,6 +654,12 @@ insertion_score
 -> insertion_position
 -> path_id
 ```
+
+The optional `hardest_first` seed rule selects the customer whose best
+feasible new-trip candidate has the largest incremental operating time. It is
+useful when long-distance customers would otherwise remain until the fleet
+has too little time for them. Trip extension still uses the ordinary minimum
+insertion score.
 
 ### 7.4 Closing and Reusing a Vehicle
 
@@ -632,6 +675,42 @@ When no further customer can be inserted:
 Start a new trip with any available compatible physical vehicle, including a vehicle whose previous trip has already finished. If no feasible option exists, report the customer and the exact infeasibility reason.
 
 For an insertion into an existing trip, `delta_cost` includes the changed trip costs and the resulting change in end-of-day recharge cost. For a new trip, it also includes `TripCost_v`; `ActivationCost_v` is added only when the physical vehicle has not been used earlier in the solution.
+
+### 7.5 Bounded Ejection Repair
+
+If construction leaves customers unserved, apply a deterministic depth-one
+repair before VND:
+
+1. temporarily remove one served customer;
+2. insert one unserved customer into any feasible trip position or new trip;
+3. reinsert the removed customer into any feasible position or new trip;
+4. accept the exchange only if both customers are served and the total number
+   of served customers increases by one.
+
+The search uses the same schedule evaluator and fixed objective scales as
+construction. Candidate and time limits are reported explicitly. A limit
+result is `search_limit_reached`, not proof that no feasible repair exists.
+Each repair result also stores the configured limits and one stop reason:
+`completed`, `candidate_limit`, `time_limit`,
+`charging_search_incomplete`, or `initial_solution_infeasible`. These fields
+are included in the text summary and warm-start metadata so experiment runs
+can be reproduced.
+
+### 7.6 Limited Depth-Two Repair
+
+If depth-one repair cannot complete a nearly feasible solution, a bounded
+depth-two step may temporarily remove two served customers. The unserved
+customer replaces one of their positions, after which both removed customers
+are reinserted in both possible orders. Only a fixed number of the best
+primary candidates is continued, and the same candidate and time limits
+remain active. This is an optional diagnostic repair, not part of the default
+Small/Medium baseline.
+
+Within the active limits, feasible completions from both reinsertion orders
+are compared by objective, risk, cost, time, and the deterministic schedule
+key. Invalid construction or depth-one input is preserved as
+`initial_solution_infeasible` and is never reinterpreted as a repairable
+partial schedule.
 
 ## 8. Charging and Schedule Feasibility
 
@@ -865,6 +944,7 @@ vehicles_used
 trips_used
 served_and_unserved_customers
 normalization_and_risk_metadata
+construction_strategy_from_the_actual_run
 runtime_breakdown
 charging_branch_evaluations
 vnd_initial_and_final_objective
@@ -876,6 +956,7 @@ vns_random_seed_and_status
 vns_iterations_and_accepted_improvements
 vns_shake_and_nested_vnd_statistics
 vns_incomplete_search_diagnostics
+repair_status_moves_candidates_and_runtime
 ```
 
 ### Selected Trips and Stops
@@ -1010,7 +1091,7 @@ Construct:
         if seed_candidates is empty:
             return partial solution with explicit infeasibility reasons
 
-        select the deterministic minimum seed candidate
+        select a seed by best insertion or regret-2
         current_trip = selected depot-to-customer-to-depot trip
         remove its customer from unserved_customers
 

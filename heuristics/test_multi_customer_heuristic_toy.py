@@ -6,6 +6,7 @@ from unittest.mock import patch
 from heuristics.multi_customer_heuristic_toy import (
     ChargingStation,
     DEPOT,
+    Leg,
     ObjectiveScales,
     ObjectiveWeights,
     VND_NEIGHBORHOOD_ORDER,
@@ -15,13 +16,48 @@ from heuristics.multi_customer_heuristic_toy import (
     evaluate_vehicle_schedule,
     improve_solution_vnd,
     improve_solution_vns,
+    repair_partial_solution_depth_one,
+    repair_partial_solution_depth_two,
     solver_warm_start_routes,
+    summarize_depth_two_repair_run,
+    summarize_repair_run,
 )
 
 
 class MultiCustomerHeuristicToyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.instance = build_toy_instance()
+
+    def _partial_construction_without_customer(self, customer_id):
+        construction = construct_initial_solution(self.instance)
+        schedules = {
+            vehicle_id: [list(trip) for trip in trips]
+            for vehicle_id, trips
+            in construction.evaluation.schedules.items()
+        }
+        removed = False
+        for trips in schedules.values():
+            for trip in list(trips):
+                if customer_id not in trip:
+                    continue
+                trip.remove(customer_id)
+                removed = True
+                if not trip:
+                    trips.remove(trip)
+        self.assertTrue(removed)
+        evaluation = evaluate_solution(
+            self.instance,
+            schedules,
+            construction.scales,
+            require_all_customers=False,
+        )
+        self.assertTrue(evaluation.feasible)
+        self.assertIn(customer_id, evaluation.unserved_customers)
+        return replace(
+            construction,
+            status="partial_infeasible",
+            evaluation=evaluation,
+        )
 
     def _vnd_from_schedules(self, schedules):
         construction = construct_initial_solution(self.instance)
@@ -976,6 +1012,122 @@ class MultiCustomerHeuristicToyTests(unittest.TestCase):
             second.evaluation.objective,
         )
 
+    def test_regret_2_reserves_the_only_compatible_vehicle(self) -> None:
+        customers = {
+            customer_id: self.instance.customers[customer_id]
+            for customer_id in ("G1", "C1")
+        }
+        flexible_vehicle = replace(
+            self.instance.vehicles["TRUCK_G_1"],
+            compatible_classes=("3", "2 (TOC)"),
+            activation_cost=0.0,
+            trip_cost=0.0,
+            road_cost_per_km=1.0,
+            energy_kwh_per_km=0.1,
+        )
+        fallback_vehicle = replace(
+            self.instance.vehicles["TRUCK_G_BACKUP"],
+            compatible_classes=("3",),
+            activation_cost=100.0,
+            trip_cost=0.0,
+            road_cost_per_km=1.0,
+            energy_kwh_per_km=0.1,
+        )
+        allowed_classes = ("3", "2 (TOC)")
+        legs = {
+            (DEPOT, "G1"): Leg(
+                DEPOT, "G1", 0.5, 0.5, 0.0, allowed_classes
+            ),
+            ("G1", DEPOT): Leg(
+                "G1", DEPOT, 0.5, 0.5, 0.0, allowed_classes
+            ),
+            (DEPOT, "C1"): Leg(
+                DEPOT, "C1", 4.0, 4.0, 0.0, allowed_classes
+            ),
+            ("C1", DEPOT): Leg(
+                "C1", DEPOT, 4.0, 4.0, 0.0, allowed_classes
+            ),
+            ("G1", "C1"): Leg(
+                "G1", "C1", 4.0, 4.0, 0.0, allowed_classes
+            ),
+            ("C1", "G1"): Leg(
+                "C1", "G1", 4.0, 4.0, 0.0, allowed_classes
+            ),
+        }
+        instance = replace(
+            self.instance,
+            customers=customers,
+            vehicles={
+                flexible_vehicle.vehicle_id: flexible_vehicle,
+                fallback_vehicle.vehicle_id: fallback_vehicle,
+            },
+            customer_charger_candidates={
+                customer_id: tuple() for customer_id in customers
+            },
+            legs=legs,
+            weights=ObjectiveWeights(risk=0.0, cost=1.0, time=0.0),
+        )
+
+        best_insertion = construct_initial_solution(instance)
+        regret_2 = construct_initial_solution(
+            instance,
+            construction_strategy="regret_2",
+        )
+        hardest_first = construct_initial_solution(
+            instance,
+            construction_strategy="hardest_first",
+        )
+        first_repair = repair_partial_solution_depth_one(
+            instance,
+            best_insertion,
+        )
+        second_repair = repair_partial_solution_depth_one(
+            instance,
+            best_insertion,
+        )
+
+        self.assertEqual(best_insertion.status, "partial_infeasible")
+        self.assertEqual(best_insertion.evaluation.unserved_customers, ("C1",))
+        self.assertEqual(regret_2.status, "feasible")
+        self.assertEqual(regret_2.construction_strategy, "regret_2")
+        self.assertEqual(regret_2.evaluation.unserved_customers, tuple())
+        self.assertEqual(
+            regret_2.evaluation.schedules["TRUCK_G_1"],
+            (("C1",),),
+        )
+        self.assertEqual(
+            regret_2.evaluation.schedules["TRUCK_G_BACKUP"],
+            (("G1",),),
+        )
+        self.assertEqual(hardest_first.status, "feasible")
+        self.assertEqual(
+            hardest_first.evaluation.unserved_customers,
+            tuple(),
+        )
+        self.assertEqual(
+            hardest_first.evaluation.schedules,
+            regret_2.evaluation.schedules,
+        )
+        self.assertEqual(first_repair.status, "feasible")
+        self.assertEqual(first_repair.evaluation.unserved_customers, tuple())
+        self.assertEqual(
+            first_repair.evaluation.schedules,
+            second_repair.evaluation.schedules,
+        )
+        self.assertEqual(
+            first_repair.accepted_moves,
+            second_repair.accepted_moves,
+        )
+        self.assertEqual(len(first_repair.accepted_moves), 1)
+        self.assertEqual(
+            first_repair.accepted_moves[0].inserted_customer,
+            "C1",
+        )
+        self.assertEqual(
+            first_repair.accepted_moves[0].ejected_customer,
+            "G1",
+        )
+
     def test_vnd_improves_suboptimal_schedule_deterministically(self) -> None:
         schedules = {
             "TRUCK_G_1": [["G1", "G2"], ["G3", "G4"]],
@@ -1005,6 +1157,359 @@ class MultiCustomerHeuristicToyTests(unittest.TestCase):
         for move in first.accepted_moves:
             self.assertIn(move.neighborhood, VND_NEIGHBORHOOD_ORDER)
             self.assertLess(move.objective_after, move.objective_before)
+
+    def test_depth_one_repair_can_apply_two_consecutive_moves(self) -> None:
+        customer_ids = ("G1", "G2", "C1", "C2")
+        customers = {
+            customer_id: replace(
+                self.instance.customers[customer_id],
+                demand_kg=4_000.0,
+                service_minutes=5.0,
+                earliest_minute=0.0,
+                latest_minute=60.0,
+            )
+            for customer_id in customer_ids
+        }
+        base_vehicle = self.instance.vehicles["TRUCK_G_1"]
+
+        def vehicle(
+            vehicle_id,
+            compatible_classes,
+            activation_cost,
+        ):
+            return replace(
+                base_vehicle,
+                vehicle_id=vehicle_id,
+                capacity_kg=5_000.0,
+                energy_kwh_per_km=0.1,
+                compatible_classes=compatible_classes,
+                activation_cost=activation_cost,
+                trip_cost=0.0,
+                road_cost_per_km=1.0,
+                shift_start_minute=0.0,
+                shift_end_minute=60.0,
+                initial_load_minutes=0.0,
+                reload_minutes=100.0,
+                max_daily_working_minutes=60.0,
+                solver_name=vehicle_id,
+            )
+
+        vehicles = {
+            item.vehicle_id: item
+            for item in (
+                vehicle("FLEX_1", ("3", "2 (TOC)"), 0.0),
+                vehicle("FLEX_2", ("3", "2 (TOC)"), 0.0),
+                vehicle("BACKUP_1", ("3",), 100.0),
+                vehicle("BACKUP_2", ("3",), 100.0),
+            )
+        }
+        positions = {
+            DEPOT: 0.0,
+            "G1": 0.5,
+            "G2": 0.7,
+            "C1": 4.0,
+            "C2": 5.0,
+        }
+        allowed_classes = ("3", "2 (TOC)")
+        legs = {
+            (from_stop, to_stop): Leg(
+                from_stop=from_stop,
+                to_stop=to_stop,
+                distance_km=abs(
+                    positions[from_stop] - positions[to_stop]
+                ),
+                travel_minutes=abs(
+                    positions[from_stop] - positions[to_stop]
+                ),
+                base_risk_rate_per_km=0.0,
+                allowed_classes=allowed_classes,
+            )
+            for from_stop in positions
+            for to_stop in positions
+            if from_stop != to_stop
+        }
+        instance = replace(
+            self.instance,
+            customers=customers,
+            vehicles=vehicles,
+            chargers={},
+            customer_charger_candidates={
+                customer_id: tuple() for customer_id in customers
+            },
+            legs=legs,
+            break_nodes=(DEPOT,),
+            weights=ObjectiveWeights(risk=0.0, cost=1.0, time=0.0),
+        )
+        construction = construct_initial_solution(instance)
+
+        repair = repair_partial_solution_depth_one(
+            instance,
+            construction,
+        )
+
+        self.assertEqual(
+            construction.status,
+            "partial_infeasible",
+            construction.evaluation.reasons,
+        )
+        self.assertEqual(len(construction.evaluation.served_customers), 2)
+        self.assertEqual(repair.status, "feasible")
+        self.assertEqual(repair.evaluation.unserved_customers, tuple())
+        self.assertEqual(len(repair.accepted_moves), 2)
+
+    def test_depth_one_reports_candidate_limit_and_configuration(
+        self,
+    ) -> None:
+        partial = self._partial_construction_without_customer("G4")
+
+        run = repair_partial_solution_depth_one(
+            self.instance,
+            partial,
+            max_candidate_evaluations=1,
+            max_seconds=9,
+            max_primary_candidates_per_ejection=2,
+        )
+
+        self.assertEqual(run.status, "search_limit_reached")
+        self.assertEqual(run.stop_reason, "candidate_limit")
+        self.assertEqual(run.evaluated_candidates, 1)
+        self.assertEqual(run.max_candidate_evaluations, 1)
+        self.assertEqual(run.max_seconds, 9.0)
+        self.assertEqual(run.max_primary_candidates_per_ejection, 2)
+        summary = summarize_repair_run(run)
+        self.assertIn("stop_reason=candidate_limit", summary)
+        self.assertIn("max_candidate_evaluations=1", summary)
+        self.assertIn(
+            "max_primary_candidates_per_ejection=2",
+            summary,
+        )
+
+    def test_depth_two_reports_time_limit_and_configuration(self) -> None:
+        partial = self._partial_construction_without_customer("G4")
+
+        with patch(
+            "heuristics.multi_customer_heuristic_toy.time.perf_counter",
+            side_effect=(0.0, 2.0, 2.0),
+        ):
+            run = repair_partial_solution_depth_two(
+                self.instance,
+                partial,
+                max_candidate_evaluations=11,
+                max_seconds=1,
+                max_primary_candidates=7,
+                max_first_reinsertions=2,
+            )
+
+        self.assertEqual(run.status, "search_limit_reached")
+        self.assertEqual(run.stop_reason, "time_limit")
+        self.assertEqual(run.evaluated_candidates, 0)
+        self.assertEqual(run.max_candidate_evaluations, 11)
+        self.assertEqual(run.max_seconds, 1.0)
+        self.assertEqual(run.max_primary_candidates, 7)
+        self.assertEqual(run.max_first_reinsertions, 2)
+        summary = summarize_depth_two_repair_run(run)
+        self.assertIn("stop_reason=time_limit", summary)
+        self.assertIn("max_primary_candidates=7", summary)
+        self.assertIn("max_first_reinsertions=2", summary)
+
+    def test_depth_one_reports_charging_search_incomplete_stop_reason(
+        self,
+    ) -> None:
+        partial = self._partial_construction_without_customer("G4")
+
+        def incomplete_candidate(
+            controlled_instance,
+            schedules,
+            scales,
+            *,
+            require_all_customers,
+            _charging_branch_counter=None,
+        ):
+            result = evaluate_solution(
+                controlled_instance,
+                schedules,
+                scales,
+                require_all_customers=require_all_customers,
+                _charging_branch_counter=_charging_branch_counter,
+            )
+            if (
+                not require_all_customers
+                and schedules != partial.evaluation.schedules
+            ):
+                return replace(
+                    result,
+                    feasible=False,
+                    reasons=(
+                        "TRUCK_G_1: charging_search_incomplete "
+                        "during repair candidate.",
+                    ),
+                )
+            return result
+
+        with patch(
+            "heuristics.multi_customer_heuristic_toy.evaluate_solution",
+            side_effect=incomplete_candidate,
+        ):
+            run = repair_partial_solution_depth_one(
+                self.instance,
+                partial,
+            )
+
+        self.assertEqual(run.status, "search_limit_reached")
+        self.assertEqual(
+            run.stop_reason,
+            "charging_search_incomplete",
+        )
+        self.assertGreater(run.incomplete_candidates, 0)
+        self.assertEqual(
+            run.incomplete_candidates,
+            run.evaluated_candidates,
+        )
+
+    def test_depth_two_repairs_case_that_depth_one_cannot(self) -> None:
+        customer_ids = ("G1", "G2", "C1")
+        customers = {
+            customer_id: replace(
+                self.instance.customers[customer_id],
+                demand_kg=4_000.0,
+                service_minutes=5.0,
+                earliest_minute=0.0,
+                latest_minute=100.0,
+            )
+            for customer_id in customer_ids
+        }
+        base_vehicle = self.instance.vehicles["TRUCK_G_1"]
+
+        def vehicle(
+            vehicle_id,
+            capacity_kg,
+            compatible_classes,
+            activation_cost,
+            road_cost_per_km=1.0,
+            shift_end_minute=100.0,
+        ):
+            return replace(
+                base_vehicle,
+                vehicle_id=vehicle_id,
+                capacity_kg=capacity_kg,
+                energy_kwh_per_km=0.1,
+                compatible_classes=compatible_classes,
+                activation_cost=activation_cost,
+                trip_cost=0.0,
+                road_cost_per_km=road_cost_per_km,
+                shift_start_minute=0.0,
+                shift_end_minute=shift_end_minute,
+                initial_load_minutes=0.0,
+                reload_minutes=5.0,
+                max_daily_working_minutes=100.0,
+                solver_name=vehicle_id,
+            )
+
+        vehicles = {
+            item.vehicle_id: item
+            for item in (
+                vehicle(
+                    "FLEX",
+                    8_000.0,
+                    ("3", "2 (TOC)"),
+                    0.0,
+                ),
+                vehicle(
+                    "BACKUP_1",
+                    4_000.0,
+                    ("3",),
+                    100.0,
+                    shift_end_minute=7.0,
+                ),
+                vehicle(
+                    "BACKUP_2",
+                    4_000.0,
+                    ("3",),
+                    100.0,
+                    road_cost_per_km=10.0,
+                    shift_end_minute=7.0,
+                ),
+            )
+        }
+        positions = {
+            DEPOT: 0.0,
+            "G1": 0.5,
+            "G2": 0.7,
+            "C1": 4.0,
+        }
+        allowed_classes = ("3", "2 (TOC)")
+        legs = {
+            (from_stop, to_stop): Leg(
+                from_stop=from_stop,
+                to_stop=to_stop,
+                distance_km=abs(
+                    positions[from_stop] - positions[to_stop]
+                ),
+                travel_minutes=abs(
+                    positions[from_stop] - positions[to_stop]
+                ),
+                base_risk_rate_per_km=0.0,
+                allowed_classes=allowed_classes,
+            )
+            for from_stop in positions
+            for to_stop in positions
+            if from_stop != to_stop
+        }
+        instance = replace(
+            self.instance,
+            customers=customers,
+            vehicles=vehicles,
+            chargers={},
+            customer_charger_candidates={
+                customer_id: tuple() for customer_id in customers
+            },
+            legs=legs,
+            break_nodes=(DEPOT,),
+            weights=ObjectiveWeights(risk=0.0, cost=1.0, time=0.0),
+        )
+        construction = construct_initial_solution(instance)
+        depth_one = repair_partial_solution_depth_one(
+            instance,
+            construction,
+        )
+
+        depth_two = repair_partial_solution_depth_two(
+            instance,
+            depth_one,
+            max_first_reinsertions=1,
+        )
+        vnd = improve_solution_vnd(
+            instance,
+            depth_two,
+        )
+
+        self.assertEqual(construction.status, "partial_infeasible")
+        self.assertEqual(
+            construction.evaluation.unserved_customers,
+            ("C1",),
+        )
+        self.assertFalse(depth_one.evaluation.feasible)
+        self.assertEqual(depth_two.status, "feasible")
+        self.assertEqual(depth_two.evaluation.unserved_customers, tuple())
+        self.assertEqual(len(depth_two.accepted_moves), 1)
+        self.assertEqual(
+            set(depth_two.accepted_moves[0].ejected_customers),
+            {"G1", "G2"},
+        )
+        self.assertEqual(
+            depth_two.accepted_moves[0].reinsertion_order,
+            ("G2", "G1"),
+        )
+        self.assertEqual(
+            depth_two.evaluation.schedules["BACKUP_1"],
+            (("G2",),),
+        )
+        self.assertEqual(
+            depth_two.evaluation.schedules["BACKUP_2"],
+            (("G1",),),
+        )
+        self.assertTrue(vnd.evaluation.feasible)
+        self.assertEqual(vnd.evaluation.unserved_customers, tuple())
 
     def test_vnd_does_not_worsen_locally_optimal_construction(self) -> None:
         construction = construct_initial_solution(self.instance)
@@ -1617,17 +2122,49 @@ class MultiCustomerHeuristicToyTests(unittest.TestCase):
             customers["G1"],
             demand_kg=-1.0,
         )
-
-        run = construct_initial_solution(
-            replace(self.instance, customers=customers)
+        malformed_instance = replace(
+            self.instance,
+            customers=customers,
         )
 
-        self.assertEqual(run.status, "input_data_error")
-        self.assertFalse(run.evaluation.feasible)
+        construction = construct_initial_solution(
+            malformed_instance
+        )
+        depth_one = repair_partial_solution_depth_one(
+            malformed_instance,
+            construction,
+        )
+        depth_two = repair_partial_solution_depth_two(
+            malformed_instance,
+            depth_one,
+        )
+        direct_depth_two = repair_partial_solution_depth_two(
+            malformed_instance,
+            construction,
+        )
+
+        self.assertEqual(construction.status, "input_data_error")
+        self.assertFalse(construction.evaluation.feasible)
         self.assertIn(
             "demand_kg must be positive",
-            run.evaluation.reasons[0],
+            construction.evaluation.reasons[0],
         )
+        for repair in (depth_one, depth_two, direct_depth_two):
+            self.assertEqual(
+                repair.status,
+                "initial_solution_infeasible",
+            )
+            self.assertEqual(
+                repair.stop_reason,
+                "initial_solution_infeasible",
+            )
+            self.assertFalse(repair.evaluation.feasible)
+            self.assertEqual(
+                repair.evaluation,
+                construction.evaluation,
+            )
+            self.assertEqual(repair.evaluated_candidates, 0)
+            self.assertEqual(repair.accepted_moves, tuple())
 
     def test_non_finite_numeric_inputs_return_input_data_error(self) -> None:
         legs = dict(self.instance.legs)
@@ -1755,7 +2292,10 @@ class MultiCustomerHeuristicToyTests(unittest.TestCase):
             evaluation.objective,
             self.instance.weights.cost
             * evaluation.total_cost
-            / scales.cost,
+            / scales.cost
+            + self.instance.weights.time
+            * evaluation.total_time_minutes
+            / scales.time,
         )
 
     def test_failed_evaluation_totals_match_retained_trips(self) -> None:

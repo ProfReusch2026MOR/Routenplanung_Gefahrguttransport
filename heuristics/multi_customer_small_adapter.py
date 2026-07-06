@@ -1,4 +1,4 @@
-"""Adapt the team's Small CSV instance to the multi-customer heuristic.
+"""Adapt precomputed Small, Medium, or Large CSV data to the heuristic.
 
 The adapter deliberately uses the precomputed OD matrices instead of loading
 the large road graph. It selects the safest loaded path for every regular
@@ -19,13 +19,17 @@ import pandas as pd
 
 if __package__:
     from .multi_customer_heuristic_toy import (
+        CONSTRUCTION_STRATEGIES,
         DEPOT,
         ChargingStation,
         Customer,
+        DepthTwoRepairRun,
+        HeuristicRun,
         InputDataError,
         Leg,
         ObjectiveScales,
         ObjectiveWeights,
+        RepairRun,
         SolutionEvaluation,
         ToyInstance,
         Vehicle,
@@ -33,6 +37,8 @@ if __package__:
         construct_initial_solution,
         improve_solution_vnd,
         improve_solution_vns,
+        repair_partial_solution_depth_one,
+        summarize_repair_run,
         summarize_run,
         summarize_vnd_run,
         summarize_vns_run,
@@ -40,13 +46,17 @@ if __package__:
     )
 else:  # pragma: no cover - direct script execution
     from multi_customer_heuristic_toy import (
+        CONSTRUCTION_STRATEGIES,
         DEPOT,
         ChargingStation,
         Customer,
+        DepthTwoRepairRun,
+        HeuristicRun,
         InputDataError,
         Leg,
         ObjectiveScales,
         ObjectiveWeights,
+        RepairRun,
         SolutionEvaluation,
         ToyInstance,
         Vehicle,
@@ -54,6 +64,8 @@ else:  # pragma: no cover - direct script execution
         construct_initial_solution,
         improve_solution_vnd,
         improve_solution_vns,
+        repair_partial_solution_depth_one,
+        summarize_repair_run,
         summarize_run,
         summarize_vnd_run,
         summarize_vns_run,
@@ -61,9 +73,10 @@ else:  # pragma: no cover - direct script execution
     )
 
 
-OD_MATRIX_FILENAME = "od_matrix_small.csv"
-CHARGER_MATRIX_FILENAME = "od_matrix_small_charger.csv"
-INSTANCE_FILE_PATTERN = "small_instanz_*Timo.csv"
+INSTANCE_FILE_PATTERN = "*instanz_*Timo.csv"
+PROJECT_HAZARD_CLASSES = frozenset(
+    {"1.1D", "2", "2 (TOC)", "3", "6", "8", "9"}
+)
 DEFAULT_SERVICE_MINUTES = 30.0
 DEFAULT_SHIFT_END_MINUTES = 600.0
 DEFAULT_DEPOT_ENERGY_PRICE = 0.35
@@ -114,6 +127,7 @@ CHARGER_COLUMNS = {
 @dataclass(frozen=True)
 class SmallAdapterResult:
     instance: ToyInstance
+    dataset_name: str
     source_files: Mapping[str, str]
     customer_names: Mapping[str, str]
     vehicle_hazard_compatibility: Mapping[str, Tuple[str, ...]]
@@ -125,20 +139,32 @@ class SmallAdapterResult:
     warnings: Tuple[str, ...]
 
 
-def _read_csv(path: Path, required_columns: Iterable[str]) -> pd.DataFrame:
+def _read_csv(
+    path: Path,
+    required_columns: Iterable[str],
+    *,
+    select_required_columns: bool = False,
+) -> pd.DataFrame:
     if not path.is_file():
         raise InputDataError(f"Required input file not found: {path}")
     try:
-        frame = pd.read_csv(path)
+        header = pd.read_csv(path, nrows=0)
     except Exception as error:
         raise InputDataError(f"Could not read CSV file {path}: {error}") from error
 
-    missing = sorted(set(required_columns) - set(frame.columns))
+    required = set(required_columns)
+    missing = sorted(required - set(header.columns))
     if missing:
         raise InputDataError(
             f"{path.name} is missing required columns: {', '.join(missing)}"
         )
-    return frame
+    try:
+        return pd.read_csv(
+            path,
+            usecols=sorted(required) if select_required_columns else None,
+        )
+    except Exception as error:
+        raise InputDataError(f"Could not read CSV file {path}: {error}") from error
 
 
 def _find_instance_file(
@@ -161,6 +187,39 @@ def _find_instance_file(
             f"--instance-file: {names}"
         )
     return matches[0]
+
+
+def _find_matrix_file(
+    data_dir: Path,
+    explicit_file: Optional[Path],
+    *,
+    charger_matrix: bool,
+) -> Path:
+    if explicit_file is not None:
+        return explicit_file.expanduser().resolve()
+
+    candidates = sorted(
+        path
+        for path in data_dir.glob("od_matrix_*.csv")
+        if ("charger" in path.stem.lower()) == charger_matrix
+    )
+    matrix_label = "charger matrix" if charger_matrix else "OD matrix"
+    if not candidates:
+        raise InputDataError(
+            f"No {matrix_label} CSV was found in {data_dir}."
+        )
+    if len(candidates) > 1:
+        names = ", ".join(path.name for path in candidates)
+        argument = (
+            "--charger-matrix-file"
+            if charger_matrix
+            else "--od-matrix-file"
+        )
+        raise InputDataError(
+            f"Several {matrix_label} CSV files were found. "
+            f"Select one with {argument}: {names}"
+        )
+    return candidates[0].resolve()
 
 
 def _as_bool(value: object, label: str) -> bool:
@@ -231,6 +290,14 @@ def _normalize_vehicle_hazard_compatibility(
     compatibility: Optional[Mapping[str, Iterable[str]]],
 ) -> Tuple[Dict[str, Tuple[str, ...]], str]:
     instance_classes = set(hazard_classes)
+    unsupported_instance_classes = sorted(
+        instance_classes - PROJECT_HAZARD_CLASSES
+    )
+    if unsupported_instance_classes:
+        raise InputDataError(
+            "Instance contains unsupported hazard classes: "
+            + ", ".join(unsupported_instance_classes)
+        )
     if compatibility is None:
         all_classes = tuple(sorted(instance_classes))
         return (
@@ -271,11 +338,11 @@ def _normalize_vehicle_hazard_compatibility(
             raise InputDataError(
                 f"{vehicle_id}: compatible hazard classes must be iterable."
             ) from error
-        unknown_classes = sorted(set(classes) - instance_classes)
+        unknown_classes = sorted(set(classes) - PROJECT_HAZARD_CLASSES)
         if unknown_classes:
             raise InputDataError(
-                f"{vehicle_id}: compatibility contains hazard classes not "
-                "used by this instance: "
+                f"{vehicle_id}: compatibility contains unsupported hazard "
+                "classes: "
                 + ", ".join(unknown_classes)
             )
         normalized[vehicle_id] = classes
@@ -293,6 +360,19 @@ def _normalize_vehicle_hazard_compatibility(
         raise InputDataError(
             "Vehicle-hazard compatibility contains unknown vehicles: "
             + ", ".join(unknown)
+        )
+    unserved_classes = sorted(
+        hazard_class
+        for hazard_class in instance_classes
+        if not any(
+            hazard_class in classes
+            for classes in normalized.values()
+        )
+    )
+    if unserved_classes:
+        raise InputDataError(
+            "No vehicle supports instance hazard classes: "
+            + ", ".join(unserved_classes)
         )
     return normalized, "explicit_mapping"
 
@@ -682,6 +762,7 @@ def build_small_adapter(
     *,
     vehicles_file: Optional[Path] = None,
     instance_file: Optional[Path] = None,
+    od_matrix_file: Optional[Path] = None,
     charger_matrix_file: Optional[Path] = None,
     vehicle_hazard_compatibility: Optional[
         Mapping[str, Iterable[str]]
@@ -706,10 +787,10 @@ def build_small_adapter(
     max_charging_branch_evaluations: int = 100,
     weights: ObjectiveWeights = ObjectiveWeights(),
 ) -> SmallAdapterResult:
-    """Load the latest coherent Small CSV set into a ``ToyInstance``."""
+    """Load a coherent precomputed-matrix data set into a ``ToyInstance``."""
     data_dir = data_dir.expanduser().resolve()
     if not data_dir.is_dir():
-        raise InputDataError(f"Small data directory not found: {data_dir}")
+        raise InputDataError(f"Data directory not found: {data_dir}")
 
     resolved_instance_file = _find_instance_file(data_dir, instance_file)
     resolved_vehicles_file = (
@@ -717,10 +798,15 @@ def build_small_adapter(
         if vehicles_file is not None
         else (data_dir.parent / "vehicles.csv").resolve()
     )
-    resolved_charger_file = (
-        charger_matrix_file.expanduser().resolve()
-        if charger_matrix_file is not None
-        else (data_dir / CHARGER_MATRIX_FILENAME).resolve()
+    resolved_od_file = _find_matrix_file(
+        data_dir,
+        od_matrix_file,
+        charger_matrix=False,
+    )
+    resolved_charger_file = _find_matrix_file(
+        data_dir,
+        charger_matrix_file,
+        charger_matrix=True,
     )
     if (
         vehicle_hazard_compatibility is not None
@@ -741,12 +827,18 @@ def build_small_adapter(
                 resolved_compatibility_file
             )
         )
-    od_file = data_dir / OD_MATRIX_FILENAME
-
     instance_frame = _read_csv(resolved_instance_file, INSTANCE_COLUMNS)
     vehicle_frame = _read_csv(resolved_vehicles_file, VEHICLE_COLUMNS)
-    od_frame = _read_csv(od_file, OD_COLUMNS)
-    charger_frame = _read_csv(resolved_charger_file, CHARGER_COLUMNS)
+    od_frame = _read_csv(
+        resolved_od_file,
+        OD_COLUMNS,
+        select_required_columns=True,
+    )
+    charger_frame = _read_csv(
+        resolved_charger_file,
+        CHARGER_COLUMNS,
+        select_required_columns=True,
+    )
 
     scalar_parameters = {
         "service_minutes": service_minutes,
@@ -899,7 +991,7 @@ def build_small_adapter(
     source_files = {
         "instance": str(resolved_instance_file),
         "vehicles": str(resolved_vehicles_file),
-        "od_matrix": str(od_file),
+        "od_matrix": str(resolved_od_file),
         "charger_matrix": str(resolved_charger_file),
     }
     if resolved_compatibility_file is not None:
@@ -909,6 +1001,7 @@ def build_small_adapter(
 
     return SmallAdapterResult(
         instance=instance,
+        dataset_name=data_dir.name,
         source_files=source_files,
         customer_names=customer_names,
         vehicle_hazard_compatibility=normalized_compatibility,
@@ -923,8 +1016,9 @@ def build_small_adapter(
 
 def summarize_adapter(result: SmallAdapterResult) -> str:
     lines = [
-        "Small multi-customer data adapter",
-        "-" * 33,
+        "Matrix-based multi-customer data adapter",
+        "-" * 40,
+        f"dataset_name={result.dataset_name}",
         f"included_customers={','.join(result.included_customers)}",
         (
             "excluded_customers="
@@ -1062,11 +1156,21 @@ def build_warm_start_payload(
     adapter_result: SmallAdapterResult,
     evaluation: SolutionEvaluation,
     *,
+    construction_run: HeuristicRun,
     search_status: str,
     runtime_seconds: Mapping[str, float],
     objective_scales: Optional[ObjectiveScales] = None,
+    repair_run: Optional[RepairRun] = None,
+    depth_two_repair_run: Optional[DepthTwoRepairRun] = None,
 ) -> Dict[str, Any]:
     """Build a JSON-safe solver warm-start and comparison payload."""
+    if construction_run.construction_strategy not in CONSTRUCTION_STRATEGIES:
+        allowed = ", ".join(CONSTRUCTION_STRATEGIES)
+        raise InputDataError(
+            "construction_run contains an invalid construction strategy "
+            f"{construction_run.construction_strategy!r}; expected one of: "
+            f"{allowed}."
+        )
     feasible = evaluation.feasible and not evaluation.unserved_customers
     routes = (
         {
@@ -1125,6 +1229,8 @@ def build_warm_start_payload(
         "charging_side_trips": charging_side_trips,
         "technical_routes": technical_routes,
         "metadata": {
+            "dataset_name": adapter_result.dataset_name,
+            "construction_strategy": construction_run.construction_strategy,
             "included_customers": list(
                 adapter_result.included_customers
             ),
@@ -1144,6 +1250,77 @@ def build_warm_start_payload(
                 adapter_result.vehicle_hazard_compatibility_source
             ),
             "risk_source": adapter_result.risk_source,
+            "max_charging_branch_evaluations": (
+                adapter_result.instance.max_charging_branch_evaluations
+            ),
+            "repair": (
+                {
+                    "status": repair_run.status,
+                    "stop_reason": repair_run.stop_reason,
+                    "max_candidate_evaluations": (
+                        repair_run.max_candidate_evaluations
+                    ),
+                    "max_seconds": repair_run.max_seconds,
+                    "max_primary_candidates_per_ejection": (
+                        repair_run.max_primary_candidates_per_ejection
+                    ),
+                    "accepted_moves": [
+                        {
+                            "inserted_customer": move.inserted_customer,
+                            "ejected_customer": move.ejected_customer,
+                            "objective_before": move.objective_before,
+                            "objective_after": move.objective_after,
+                        }
+                        for move in repair_run.accepted_moves
+                    ],
+                    "evaluated_candidates": (
+                        repair_run.evaluated_candidates
+                    ),
+                    "incomplete_candidates": (
+                        repair_run.incomplete_candidates
+                    ),
+                }
+                if repair_run is not None
+                else None
+            ),
+            "depth_two_repair": (
+                {
+                    "status": depth_two_repair_run.status,
+                    "stop_reason": depth_two_repair_run.stop_reason,
+                    "max_candidate_evaluations": (
+                        depth_two_repair_run.max_candidate_evaluations
+                    ),
+                    "max_seconds": depth_two_repair_run.max_seconds,
+                    "max_primary_candidates": (
+                        depth_two_repair_run.max_primary_candidates
+                    ),
+                    "max_first_reinsertions": (
+                        depth_two_repair_run.max_first_reinsertions
+                    ),
+                    "accepted_moves": [
+                        {
+                            "inserted_customer": move.inserted_customer,
+                            "ejected_customers": list(
+                                move.ejected_customers
+                            ),
+                            "reinsertion_order": list(
+                                move.reinsertion_order
+                            ),
+                            "objective_before": move.objective_before,
+                            "objective_after": move.objective_after,
+                        }
+                        for move in depth_two_repair_run.accepted_moves
+                    ],
+                    "evaluated_candidates": (
+                        depth_two_repair_run.evaluated_candidates
+                    ),
+                    "incomplete_candidates": (
+                        depth_two_repair_run.incomplete_candidates
+                    ),
+                }
+                if depth_two_repair_run is not None
+                else None
+            ),
             "source_files": {
                 name: Path(path).name
                 for name, path in adapter_result.source_files.items()
@@ -1215,16 +1392,22 @@ def export_warm_start_json(
     evaluation: SolutionEvaluation,
     output_path: Path,
     *,
+    construction_run: HeuristicRun,
     search_status: str,
     runtime_seconds: Mapping[str, float],
     objective_scales: Optional[ObjectiveScales] = None,
+    repair_run: Optional[RepairRun] = None,
+    depth_two_repair_run: Optional[DepthTwoRepairRun] = None,
 ) -> Path:
     payload = build_warm_start_payload(
         adapter_result,
         evaluation,
+        construction_run=construction_run,
         search_status=search_status,
         runtime_seconds=runtime_seconds,
         objective_scales=objective_scales,
+        repair_run=repair_run,
+        depth_two_repair_run=depth_two_repair_run,
     )
     output_path = output_path.expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1244,14 +1427,15 @@ def export_warm_start_json(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the multi-customer heuristic with the team's Small CSV data."
+            "Run the multi-customer heuristic with precomputed Small, "
+            "Medium, or Large CSV data."
         )
     )
     parser.add_argument(
         "--data-dir",
         type=Path,
         required=True,
-        help="Directory containing the Small instance and OD matrix CSV files.",
+        help="Directory containing one coherent matrix-based data set.",
     )
     parser.add_argument(
         "--vehicles-file",
@@ -1263,7 +1447,16 @@ def parse_args() -> argparse.Namespace:
         "--instance-file",
         type=Path,
         default=None,
-        help="Explicit instance CSV; otherwise small_instanz_*Timo.csv is used.",
+        help="Explicit instance CSV; otherwise a unique *instanz_*Timo.csv is used.",
+    )
+    parser.add_argument(
+        "--od-matrix-file",
+        type=Path,
+        default=None,
+        help=(
+            "Explicit regular OD matrix CSV; otherwise a known Small default "
+            "or unique non-charger od_matrix_*.csv is used."
+        ),
     )
     parser.add_argument(
         "--charger-matrix-file",
@@ -1279,8 +1472,9 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help=(
-            "Optional JSON object mapping every vehicle ID to the hazard "
-            "classes it may carry."
+            "Optional JSON object mapping every vehicle ID to its complete "
+            "hazard-class capability list. Legal classes not used by the "
+            "selected instance may remain in the list."
         ),
     )
     parser.add_argument(
@@ -1288,6 +1482,48 @@ def parse_args() -> argparse.Namespace:
         action="append",
         default=[],
         help="Customer ID to exclude explicitly; may be repeated.",
+    )
+    parser.add_argument(
+        "--risk-weight",
+        type=float,
+        default=0.5,
+        help="Risk weight in the normalized heuristic objective.",
+    )
+    parser.add_argument(
+        "--cost-weight",
+        type=float,
+        default=0.3,
+        help="Cost weight in the normalized heuristic objective.",
+    )
+    parser.add_argument(
+        "--time-weight",
+        type=float,
+        default=0.2,
+        help="Operating-time weight in the normalized heuristic objective.",
+    )
+    parser.add_argument(
+        "--construction-strategy",
+        choices=CONSTRUCTION_STRATEGIES,
+        default="best_insertion",
+        help=(
+            "New-trip seed rule used during sequential construction. "
+            "regret_2 reserves vehicles for customers with few or costly "
+            "vehicle alternatives; hardest_first starts with the largest "
+            "best feasible time increment. Trip extension remains best "
+            "insertion."
+        ),
+    )
+    parser.add_argument(
+        "--repair-evaluations",
+        type=int,
+        default=20_000,
+        help="Maximum schedule evaluations in depth-one ejection repair.",
+    )
+    parser.add_argument(
+        "--repair-seconds",
+        type=float,
+        default=300.0,
+        help="Maximum depth-one ejection-repair runtime in seconds.",
     )
     parser.add_argument(
         "--vns-seconds",
@@ -1300,6 +1536,15 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1_000,
         help="Maximum number of deterministic VND neighborhood passes.",
+    )
+    parser.add_argument(
+        "--max-charging-branch-evaluations",
+        type=int,
+        default=100,
+        help=(
+            "Maximum charging-state branches per schedule evaluation. "
+            "Use a larger value for Medium or Large diagnostics."
+        ),
     )
     parser.add_argument("--random-seed", type=int, default=42)
     parser.add_argument(
@@ -1321,16 +1566,34 @@ def main() -> None:
             args.data_dir,
             vehicles_file=args.vehicles_file,
             instance_file=args.instance_file,
+            od_matrix_file=args.od_matrix_file,
             charger_matrix_file=args.charger_matrix_file,
             vehicle_hazard_compatibility_file=(
                 args.vehicle_hazard_compatibility_file
             ),
             excluded_customers=args.exclude_customer,
+            weights=ObjectiveWeights(
+                risk=args.risk_weight,
+                cost=args.cost_weight,
+                time=args.time_weight,
+            ),
+            max_charging_branch_evaluations=(
+                args.max_charging_branch_evaluations
+            ),
         )
-        construction = construct_initial_solution(adapter.instance)
-        vnd = improve_solution_vnd(
+        construction = construct_initial_solution(
+            adapter.instance,
+            construction_strategy=args.construction_strategy,
+        )
+        repair = repair_partial_solution_depth_one(
             adapter.instance,
             construction,
+            max_candidate_evaluations=args.repair_evaluations,
+            max_seconds=args.repair_seconds,
+        )
+        vnd = improve_solution_vnd(
+            adapter.instance,
+            repair,
             max_neighborhood_passes=args.vnd_passes,
         )
         vns = improve_solution_vns(
@@ -1345,7 +1608,11 @@ def main() -> None:
 
     print(summarize_adapter(adapter))
     print()
+    print(f"construction_strategy={args.construction_strategy}")
+    print()
     print(summarize_run(construction))
+    print()
+    print(summarize_repair_run(repair))
     print()
     print(summarize_vnd_run(vnd))
     print()
@@ -1356,13 +1623,16 @@ def main() -> None:
                 adapter,
                 vns.evaluation,
                 args.output_json,
+                construction_run=construction,
                 search_status=vns.status,
                 runtime_seconds={
                     "construction": construction.runtime_seconds,
+                    "repair": repair.runtime_seconds,
                     "vnd": vnd.runtime_seconds,
                     "vns": vns.runtime_seconds,
                 },
                 objective_scales=vns.scales,
+                repair_run=repair,
             )
         except (OSError, ValueError) as error:
             raise SystemExit(

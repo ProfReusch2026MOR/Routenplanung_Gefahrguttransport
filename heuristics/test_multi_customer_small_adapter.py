@@ -1,3 +1,4 @@
+from dataclasses import replace
 import json
 from pathlib import Path
 import tempfile
@@ -8,8 +9,11 @@ import pandas as pd
 from heuristics.multi_customer_heuristic_toy import (
     DEPOT,
     InputDataError,
+    ObjectiveWeights,
     build_toy_instance,
     construct_initial_solution,
+    repair_partial_solution_depth_one,
+    repair_partial_solution_depth_two,
 )
 from heuristics.multi_customer_small_adapter import (
     SmallAdapterResult,
@@ -20,6 +24,12 @@ from heuristics.multi_customer_small_adapter import (
 
 
 class MultiCustomerSmallAdapterTests(unittest.TestCase):
+    def test_default_objective_weights_include_time(self) -> None:
+        self.assertEqual(
+            ObjectiveWeights(),
+            ObjectiveWeights(risk=0.5, cost=0.3, time=0.2),
+        )
+
     def _write_fixture(
         self,
         root: Path,
@@ -161,6 +171,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
             run = construct_initial_solution(result.instance)
 
         self.assertEqual(result.included_customers, ("C1", "C2"))
+        self.assertEqual(result.dataset_name, "Small")
         self.assertEqual(result.customer_names["C1"], "Customer_One")
         self.assertEqual(result.instance.customers["C1"].demand_kg, 6_500)
         vehicle = result.instance.vehicles["MAN_eTGX"]
@@ -177,6 +188,102 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
         )
         self.assertTrue(run.evaluation.feasible)
         self.assertEqual(set(run.evaluation.served_customers), {"C1", "C2"})
+
+    def test_auto_discovers_medium_matrix_filenames(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            small_dir = self._write_fixture(root)
+            medium_dir = root / "Medium"
+            small_dir.rename(medium_dir)
+            (
+                medium_dir / "small_instanz_for_Timo.csv"
+            ).rename(medium_dir / "medium_instanz_for_Timo.csv")
+            (
+                medium_dir / "od_matrix_small.csv"
+            ).rename(medium_dir / "od_matrix_medium.csv")
+            (
+                medium_dir / "od_matrix_small_charger.csv"
+            ).rename(medium_dir / "od_matrix_medium_charger.csv")
+
+            result = build_small_adapter(medium_dir)
+
+        self.assertEqual(result.dataset_name, "Medium")
+        self.assertEqual(
+            Path(result.source_files["instance"]).name,
+            "medium_instanz_for_Timo.csv",
+        )
+        self.assertEqual(
+            Path(result.source_files["od_matrix"]).name,
+            "od_matrix_medium.csv",
+        )
+        self.assertEqual(
+            Path(result.source_files["charger_matrix"]).name,
+            "od_matrix_medium_charger.csv",
+        )
+
+    def test_rejects_ambiguous_regular_matrix_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            small_dir = self._write_fixture(Path(directory))
+            default_file = small_dir / "od_matrix_small.csv"
+            (small_dir / "od_matrix_medium.csv").write_bytes(
+                default_file.read_bytes()
+            )
+
+            with self.assertRaisesRegex(
+                InputDataError,
+                "Several OD matrix CSV files were found",
+            ):
+                build_small_adapter(small_dir)
+
+    def test_rejects_ambiguous_charger_matrix_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            small_dir = self._write_fixture(Path(directory))
+            default_file = small_dir / "od_matrix_small_charger.csv"
+            (small_dir / "od_matrix_medium_charger.csv").write_bytes(
+                default_file.read_bytes()
+            )
+
+            with self.assertRaisesRegex(
+                InputDataError,
+                "Several charger matrix CSV files were found",
+            ):
+                build_small_adapter(small_dir)
+
+    def test_accepts_explicit_regular_od_matrix_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            small_dir = self._write_fixture(Path(directory))
+            default_file = small_dir / "od_matrix_small.csv"
+            explicit_file = small_dir / "regular_routes.csv"
+            default_file.rename(explicit_file)
+
+            result = build_small_adapter(
+                small_dir,
+                od_matrix_file=explicit_file,
+            )
+
+        self.assertEqual(
+            Path(result.source_files["od_matrix"]).name,
+            explicit_file.name,
+        )
+        self.assertIn((DEPOT, "C1"), result.instance.legs)
+
+    def test_accepts_three_component_objective_weights(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            small_dir = self._write_fixture(Path(directory))
+            weights = ObjectiveWeights(
+                risk=0.5,
+                cost=0.3,
+                time=0.2,
+            )
+
+            result = build_small_adapter(
+                small_dir,
+                weights=weights,
+            )
+            run = construct_initial_solution(result.instance)
+
+        self.assertEqual(result.instance.weights, weights)
+        self.assertTrue(run.evaluation.feasible)
 
     def test_excludes_tunnel_and_nonfinite_loaded_relations(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -267,13 +374,46 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
             run.evaluation.vehicle_evaluations["VOLVO_TEST"].trips
         )
 
-    def test_rejects_unknown_hazard_class_in_compatibility(self) -> None:
+    def test_accepts_unused_supported_hazard_class_in_compatibility(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            small_dir = self._write_fixture(Path(directory))
+
+            result = build_small_adapter(
+                small_dir,
+                vehicle_hazard_compatibility={
+                    "MAN_eTGX": ("3", "8"),
+                },
+            )
+
+        self.assertEqual(
+            result.instance.vehicles["MAN_eTGX"].compatible_classes,
+            ("3", "8"),
+        )
+
+    def test_rejects_unsupported_hazard_class_in_compatibility(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             small_dir = self._write_fixture(Path(directory))
 
             with self.assertRaisesRegex(
                 InputDataError,
-                "hazard classes not used by this instance: 8",
+                "unsupported hazard classes: 99",
+            ):
+                build_small_adapter(
+                    small_dir,
+                    vehicle_hazard_compatibility={
+                        "MAN_eTGX": ("3", "99"),
+                    },
+                )
+
+    def test_requires_vehicle_support_for_each_instance_class(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            small_dir = self._write_fixture(Path(directory))
+
+            with self.assertRaisesRegex(
+                InputDataError,
+                "No vehicle supports instance hazard classes: 3",
             ):
                 build_small_adapter(
                     small_dir,
@@ -355,6 +495,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
             payload = build_warm_start_payload(
                 result,
                 run.evaluation,
+                construction_run=run,
                 search_status=run.status,
                 runtime_seconds={
                     "construction": run.runtime_seconds,
@@ -405,22 +546,84 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
             small_dir = self._write_fixture(root)
             adapter = build_small_adapter(small_dir)
             run = construct_initial_solution(adapter.instance)
+            repair = repair_partial_solution_depth_one(
+                adapter.instance,
+                run,
+                max_candidate_evaluations=321,
+                max_seconds=12.5,
+                max_primary_candidates_per_ejection=4,
+            )
+            depth_two_repair = repair_partial_solution_depth_two(
+                adapter.instance,
+                repair,
+                max_candidate_evaluations=654,
+                max_seconds=23.5,
+                max_primary_candidates=8,
+                max_first_reinsertions=2,
+            )
             output_path = root / "output" / "warm_start.json"
 
             exported_path = export_warm_start_json(
                 adapter,
-                run.evaluation,
+                repair.evaluation,
                 output_path,
+                construction_run=run,
                 search_status=run.status,
                 runtime_seconds={
                     "construction": run.runtime_seconds,
+                    "repair": repair.runtime_seconds,
                 },
                 objective_scales=run.scales,
+                repair_run=repair,
+                depth_two_repair_run=depth_two_repair,
             )
             payload = json.loads(exported_path.read_text(encoding="utf-8"))
 
         self.assertEqual(payload["schema_version"], "1.0")
         self.assertEqual(payload["status"], "feasible")
+        self.assertEqual(payload["metadata"]["dataset_name"], "Small")
+        self.assertEqual(
+            payload["metadata"]["construction_strategy"],
+            run.construction_strategy,
+        )
+        self.assertEqual(
+            payload["metadata"]["repair"]["status"],
+            "feasible",
+        )
+        self.assertEqual(
+            payload["metadata"]["repair"]["stop_reason"],
+            "completed",
+        )
+        self.assertEqual(
+            payload["metadata"]["repair"]["max_candidate_evaluations"],
+            321,
+        )
+        self.assertEqual(
+            payload["metadata"]["repair"]["max_seconds"],
+            12.5,
+        )
+        self.assertEqual(
+            payload["metadata"]["repair"][
+                "max_primary_candidates_per_ejection"
+            ],
+            4,
+        )
+        depth_two_metadata = payload["metadata"]["depth_two_repair"]
+        self.assertEqual(depth_two_metadata["status"], "feasible")
+        self.assertEqual(depth_two_metadata["stop_reason"], "completed")
+        self.assertEqual(
+            depth_two_metadata["max_candidate_evaluations"],
+            654,
+        )
+        self.assertEqual(depth_two_metadata["max_seconds"], 23.5)
+        self.assertEqual(
+            depth_two_metadata["max_primary_candidates"],
+            8,
+        )
+        self.assertEqual(
+            depth_two_metadata["max_first_reinsertions"],
+            2,
+        )
         self.assertEqual(
             set(payload["routes"]["MAN_eTGX"]),
             {DEPOT, "C1", "C2"},
@@ -441,6 +644,10 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
             payload["metadata"]["requires_solver_importer_validation"]
         )
         self.assertEqual(
+            payload["metadata"]["max_charging_branch_evaluations"],
+            100,
+        )
+        self.assertEqual(
             payload["objective"]["scales"]["risk"],
             run.scales.risk,
         )
@@ -459,6 +666,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
             payload = build_warm_start_payload(
                 adapter,
                 run.evaluation,
+                construction_run=run,
                 search_status=run.status,
                 runtime_seconds={
                     "construction": run.runtime_seconds,
@@ -489,6 +697,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                         build_warm_start_payload(
                             adapter,
                             run.evaluation,
+                            construction_run=run,
                             search_status=run.status,
                             runtime_seconds={
                                 "construction": invalid_runtime,
@@ -501,6 +710,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
         run = construct_initial_solution(instance)
         adapter = SmallAdapterResult(
             instance=instance,
+            dataset_name="toy",
             source_files={},
             customer_names={
                 customer_id: customer_id
@@ -521,6 +731,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
         payload = build_warm_start_payload(
             adapter,
             run.evaluation,
+            construction_run=run,
             search_status=run.status,
             runtime_seconds={"construction": run.runtime_seconds},
             objective_scales=run.scales,
@@ -549,6 +760,55 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 for stop in route
             )
         )
+
+    def test_payload_uses_actual_construction_strategy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            small_dir = self._write_fixture(Path(directory))
+            adapter = build_small_adapter(small_dir)
+            run = construct_initial_solution(
+                adapter.instance,
+                construction_strategy="regret_2",
+            )
+
+            payload = build_warm_start_payload(
+                adapter,
+                run.evaluation,
+                construction_run=run,
+                search_status=run.status,
+                runtime_seconds={"construction": run.runtime_seconds},
+                objective_scales=run.scales,
+            )
+
+        self.assertEqual(run.construction_strategy, "regret_2")
+        self.assertEqual(
+            payload["metadata"]["construction_strategy"],
+            "regret_2",
+        )
+
+    def test_payload_rejects_invalid_run_strategy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            small_dir = self._write_fixture(Path(directory))
+            adapter = build_small_adapter(small_dir)
+            run = construct_initial_solution(adapter.instance)
+            invalid_run = replace(
+                run,
+                construction_strategy="not_a_strategy",
+            )
+
+            with self.assertRaisesRegex(
+                InputDataError,
+                "invalid construction strategy",
+            ):
+                build_warm_start_payload(
+                    adapter,
+                    run.evaluation,
+                    construction_run=invalid_run,
+                    search_status=run.status,
+                    runtime_seconds={
+                        "construction": run.runtime_seconds,
+                    },
+                    objective_scales=run.scales,
+                )
 
 
 if __name__ == "__main__":

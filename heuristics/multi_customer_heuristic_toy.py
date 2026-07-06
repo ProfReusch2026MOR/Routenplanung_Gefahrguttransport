@@ -26,6 +26,11 @@ VND_NEIGHBORHOOD_ORDER = (
     "inter_trip_swap",
     "trip_reassignment",
 )
+CONSTRUCTION_STRATEGIES = (
+    "best_insertion",
+    "regret_2",
+    "hardest_first",
+)
 
 
 @dataclass(frozen=True)
@@ -81,9 +86,9 @@ class Leg:
 
 @dataclass(frozen=True)
 class ObjectiveWeights:
-    risk: float = 0.65
-    cost: float = 0.35
-    time: float = 0.0
+    risk: float = 0.5
+    cost: float = 0.3
+    time: float = 0.2
 
 
 @dataclass(frozen=True)
@@ -223,6 +228,77 @@ class HeuristicRun:
     evaluation: SolutionEvaluation
     scales: ObjectiveScales
     runtime_seconds: float
+    construction_strategy: str = "best_insertion"
+
+
+@dataclass(frozen=True)
+class _ConstructionCandidate:
+    key: Tuple[float, float, float, float, str, int, str, int]
+    schedules: Dict[str, List[List[str]]]
+    evaluation: SolutionEvaluation
+    vehicle_id: str
+    customer_id: str
+
+
+@dataclass(frozen=True)
+class RepairMove:
+    inserted_customer: str
+    ejected_customer: str
+    objective_before: float
+    objective_after: float
+
+
+@dataclass(frozen=True)
+class RepairRun:
+    status: str
+    stop_reason: str
+    initial_evaluation: SolutionEvaluation
+    evaluation: SolutionEvaluation
+    scales: ObjectiveScales
+    accepted_moves: Tuple[RepairMove, ...]
+    evaluated_candidates: int
+    incomplete_candidates: int
+    max_candidate_evaluations: int
+    max_seconds: float
+    max_primary_candidates_per_ejection: int
+    runtime_seconds: float
+    construction_strategy: str
+
+
+@dataclass(frozen=True)
+class DepthTwoRepairMove:
+    inserted_customer: str
+    ejected_customers: Tuple[str, str]
+    reinsertion_order: Tuple[str, str]
+    objective_before: float
+    objective_after: float
+
+
+@dataclass(frozen=True)
+class DepthTwoRepairRun:
+    status: str
+    stop_reason: str
+    initial_evaluation: SolutionEvaluation
+    evaluation: SolutionEvaluation
+    scales: ObjectiveScales
+    accepted_moves: Tuple[DepthTwoRepairMove, ...]
+    evaluated_candidates: int
+    incomplete_candidates: int
+    max_candidate_evaluations: int
+    max_seconds: float
+    max_primary_candidates: int
+    max_first_reinsertions: int
+    runtime_seconds: float
+    construction_strategy: str
+
+
+@dataclass(frozen=True)
+class _DepthTwoPrimaryCandidate:
+    key: Tuple[object, ...]
+    schedules: Dict[str, List[List[str]]]
+    evaluation: SolutionEvaluation
+    inserted_customer: str
+    ejected_customers: Tuple[str, str]
 
 
 @dataclass(frozen=True)
@@ -2542,6 +2618,49 @@ def _candidate_key(
     )
 
 
+def _select_construction_candidate(
+    candidates: Sequence[_ConstructionCandidate],
+    construction_strategy: str,
+) -> _ConstructionCandidate:
+    if not candidates:
+        raise ValueError("At least one construction candidate is required.")
+    if construction_strategy == "best_insertion":
+        return min(candidates, key=lambda candidate: candidate.key)
+    if construction_strategy not in {"regret_2", "hardest_first"}:
+        allowed = ", ".join(CONSTRUCTION_STRATEGIES)
+        raise ValueError(
+            f"Unknown construction strategy {construction_strategy!r}; "
+            f"expected one of: {allowed}."
+        )
+
+    candidates_by_customer: Dict[str, List[_ConstructionCandidate]] = {}
+    for candidate in candidates:
+        candidates_by_customer.setdefault(
+            candidate.customer_id,
+            [],
+        ).append(candidate)
+
+    customer_choices = []
+    for customer_id in sorted(candidates_by_customer):
+        alternatives = sorted(
+            candidates_by_customer[customer_id],
+            key=lambda candidate: candidate.key,
+        )
+        best = alternatives[0]
+        if construction_strategy == "hardest_first":
+            priority = (-best.key[3], -best.key[0], best.key)
+            customer_choices.append((priority, best))
+            continue
+        if len(alternatives) == 1:
+            priority = (0, 0.0, best.key)
+        else:
+            regret = alternatives[1].key[0] - best.key[0]
+            priority = (1, -regret, best.key)
+        customer_choices.append((priority, best))
+
+    return min(customer_choices, key=lambda item: item[0])[1]
+
+
 def _empty_failure_solution(
     instance: ToyInstance,
     reason: str,
@@ -2581,9 +2700,19 @@ def _search_limit_reached(reasons: Iterable[str]) -> bool:
     )
 
 
-def construct_initial_solution(instance: ToyInstance) -> HeuristicRun:
-    """Construct deterministic vehicle trips by sequential best insertion."""
+def construct_initial_solution(
+    instance: ToyInstance,
+    *,
+    construction_strategy: str = "best_insertion",
+) -> HeuristicRun:
+    """Construct deterministic vehicle trips by sequential insertion."""
     start = time.perf_counter()
+    if construction_strategy not in CONSTRUCTION_STRATEGIES:
+        allowed = ", ".join(CONSTRUCTION_STRATEGIES)
+        raise ValueError(
+            f"Unknown construction strategy {construction_strategy!r}; "
+            f"expected one of: {allowed}."
+        )
     try:
         validate_instance(instance)
         scales = compute_reference_scales(instance)
@@ -2597,6 +2726,7 @@ def construct_initial_solution(instance: ToyInstance) -> HeuristicRun:
             ),
             scales,
             time.perf_counter() - start,
+            construction_strategy=construction_strategy,
         )
     except NoFeasibleCustomerError as error:
         scales = ObjectiveScales(1.0, 1.0, 1.0, False)
@@ -2627,6 +2757,7 @@ def construct_initial_solution(instance: ToyInstance) -> HeuristicRun:
             ),
             scales,
             time.perf_counter() - start,
+            construction_strategy=construction_strategy,
         )
     schedules: Dict[str, List[List[str]]] = {
         vehicle_id: [] for vehicle_id in instance.vehicles
@@ -2670,7 +2801,15 @@ def construct_initial_solution(instance: ToyInstance) -> HeuristicRun:
                     0,
                 )
                 feasible_seed_customers.add(customer_id)
-                seed_candidates.append((key, proposal, evaluation, vehicle_id))
+                seed_candidates.append(
+                    _ConstructionCandidate(
+                        key=key,
+                        schedules=proposal,
+                        evaluation=evaluation,
+                        vehicle_id=vehicle_id,
+                        customer_id=customer_id,
+                    )
+                )
 
         for customer_id in feasible_seed_customers:
             insertion_rejections.pop(customer_id, None)
@@ -2714,13 +2853,17 @@ def construct_initial_solution(instance: ToyInstance) -> HeuristicRun:
                 final_evaluation,
                 scales,
                 time.perf_counter() - start,
+                construction_strategy=construction_strategy,
             )
 
-        _, schedules, current_evaluation, current_vehicle_id = min(
+        selected_seed = _select_construction_candidate(
             seed_candidates,
-            key=lambda item: item[0],
+            construction_strategy,
         )
-        seeded_customer = schedules[current_vehicle_id][-1][0]
+        schedules = selected_seed.schedules
+        current_evaluation = selected_seed.evaluation
+        current_vehicle_id = selected_seed.vehicle_id
+        seeded_customer = selected_seed.customer_id
         unserved.remove(seeded_customer)
         insertion_rejections.pop(seeded_customer, None)
         current_trip_index = len(schedules[current_vehicle_id]) - 1
@@ -2760,7 +2903,13 @@ def construct_initial_solution(instance: ToyInstance) -> HeuristicRun:
                         position,
                     )
                     insertion_candidates.append(
-                        (key, proposal, evaluation, customer_id)
+                        _ConstructionCandidate(
+                            key=key,
+                            schedules=proposal,
+                            evaluation=evaluation,
+                            vehicle_id=current_vehicle_id,
+                            customer_id=customer_id,
+                        )
                     )
             for customer_id in tuple(unserved):
                 if customer_id in feasible_insertion_customers:
@@ -2772,10 +2921,13 @@ def construct_initial_solution(instance: ToyInstance) -> HeuristicRun:
                     ).update(iteration_rejections[customer_id])
             if not insertion_candidates:
                 break
-            _, schedules, current_evaluation, inserted_customer = min(
+            selected_insertion = _select_construction_candidate(
                 insertion_candidates,
-                key=lambda item: item[0],
+                "best_insertion",
             )
+            schedules = selected_insertion.schedules
+            current_evaluation = selected_insertion.evaluation
+            inserted_customer = selected_insertion.customer_id
             unserved.remove(inserted_customer)
             insertion_rejections.pop(inserted_customer, None)
 
@@ -2800,6 +2952,808 @@ def construct_initial_solution(instance: ToyInstance) -> HeuristicRun:
         final_evaluation,
         scales,
         time.perf_counter() - start,
+        construction_strategy=construction_strategy,
+    )
+
+
+def _customer_insertion_proposals(
+    schedules: Mapping[str, Sequence[Sequence[str]]],
+    customer_id: str,
+) -> Iterable[
+    Tuple[
+        str,
+        int,
+        int,
+        Dict[str, List[List[str]]],
+    ]
+]:
+    for vehicle_id in sorted(schedules):
+        for trip_index, trip in enumerate(schedules[vehicle_id]):
+            for insertion_position in range(len(trip) + 1):
+                proposal = _copy_schedules(schedules)
+                proposal[vehicle_id][trip_index].insert(
+                    insertion_position,
+                    customer_id,
+                )
+                yield (
+                    vehicle_id,
+                    trip_index,
+                    insertion_position,
+                    proposal,
+                )
+
+        proposal = _copy_schedules(schedules)
+        proposal[vehicle_id].append([customer_id])
+        yield vehicle_id, len(schedules[vehicle_id]), 0, proposal
+
+
+def repair_partial_solution_depth_one(
+    instance: ToyInstance,
+    construction_run: HeuristicRun,
+    *,
+    max_candidate_evaluations: int = 20_000,
+    max_seconds: float = 300.0,
+    max_primary_candidates_per_ejection: int = 3,
+) -> RepairRun:
+    """Repair a partial construction by one-customer ejection exchanges."""
+    if (
+        isinstance(max_candidate_evaluations, bool)
+        or not isinstance(max_candidate_evaluations, Integral)
+        or max_candidate_evaluations <= 0
+    ):
+        raise ValueError(
+            "max_candidate_evaluations must be a positive integer."
+        )
+    if (
+        isinstance(max_seconds, bool)
+        or not isinstance(max_seconds, Real)
+        or not math.isfinite(float(max_seconds))
+        or max_seconds <= 0
+    ):
+        raise ValueError("max_seconds must be a positive finite number.")
+    if (
+        isinstance(max_primary_candidates_per_ejection, bool)
+        or not isinstance(max_primary_candidates_per_ejection, Integral)
+        or max_primary_candidates_per_ejection <= 0
+    ):
+        raise ValueError(
+            "max_primary_candidates_per_ejection must be a positive "
+            "integer."
+        )
+
+    max_candidate_evaluations = int(max_candidate_evaluations)
+    max_seconds = float(max_seconds)
+    max_primary_candidates_per_ejection = int(
+        max_primary_candidates_per_ejection
+    )
+    start = time.perf_counter()
+    deadline = start + max_seconds
+    scales = construction_run.scales
+    initial_evaluation = construction_run.evaluation
+    if construction_run.status == "input_data_error":
+        return RepairRun(
+            status="initial_solution_infeasible",
+            stop_reason="initial_solution_infeasible",
+            initial_evaluation=initial_evaluation,
+            evaluation=initial_evaluation,
+            scales=scales,
+            accepted_moves=tuple(),
+            evaluated_candidates=0,
+            incomplete_candidates=0,
+            max_candidate_evaluations=max_candidate_evaluations,
+            max_seconds=max_seconds,
+            max_primary_candidates_per_ejection=(
+                max_primary_candidates_per_ejection
+            ),
+            runtime_seconds=time.perf_counter() - start,
+            construction_strategy=construction_run.construction_strategy,
+        )
+    current_evaluation = evaluate_solution(
+        instance,
+        initial_evaluation.schedules,
+        scales,
+        require_all_customers=False,
+    )
+    if not current_evaluation.feasible:
+        return RepairRun(
+            status="initial_solution_infeasible",
+            stop_reason="initial_solution_infeasible",
+            initial_evaluation=initial_evaluation,
+            evaluation=initial_evaluation,
+            scales=scales,
+            accepted_moves=tuple(),
+            evaluated_candidates=0,
+            incomplete_candidates=0,
+            max_candidate_evaluations=max_candidate_evaluations,
+            max_seconds=max_seconds,
+            max_primary_candidates_per_ejection=(
+                max_primary_candidates_per_ejection
+            ),
+            runtime_seconds=time.perf_counter() - start,
+            construction_strategy=construction_run.construction_strategy,
+        )
+
+    evaluated_candidates = 0
+    incomplete_candidates = 0
+    limit_reached = False
+    limit_stop_reason: Optional[str] = None
+    accepted_moves: List[RepairMove] = []
+
+    def evaluate_candidate(
+        proposal: Mapping[str, Sequence[Sequence[str]]],
+    ) -> Optional[SolutionEvaluation]:
+        nonlocal evaluated_candidates
+        nonlocal incomplete_candidates
+        nonlocal limit_reached
+        nonlocal limit_stop_reason
+
+        if evaluated_candidates >= max_candidate_evaluations:
+            limit_reached = True
+            limit_stop_reason = "candidate_limit"
+            return None
+        if time.perf_counter() >= deadline:
+            limit_reached = True
+            limit_stop_reason = "time_limit"
+            return None
+        evaluation = evaluate_solution(
+            instance,
+            proposal,
+            scales,
+            require_all_customers=False,
+        )
+        evaluated_candidates += 1
+        if _search_limit_reached(evaluation.reasons):
+            incomplete_candidates += 1
+        return evaluation
+
+    def find_best_reinsertion(
+        inserted_candidate: _ConstructionCandidate,
+        ejected_customer: str,
+        expected_served: set[str],
+    ) -> Optional[_ConstructionCandidate]:
+        reinsertion_candidates: List[_ConstructionCandidate] = []
+        for (
+            vehicle_id,
+            trip_index,
+            insertion_position,
+            proposal,
+        ) in _customer_insertion_proposals(
+            inserted_candidate.schedules,
+            ejected_customer,
+        ):
+            candidate_evaluation = evaluate_candidate(proposal)
+            if candidate_evaluation is None:
+                break
+            if (
+                not candidate_evaluation.feasible
+                or set(candidate_evaluation.served_customers)
+                != expected_served
+            ):
+                continue
+            reinsertion_candidates.append(
+                _ConstructionCandidate(
+                    key=_candidate_key(
+                        inserted_candidate.evaluation,
+                        candidate_evaluation,
+                        vehicle_id,
+                        trip_index,
+                        ejected_customer,
+                        insertion_position,
+                    ),
+                    schedules=proposal,
+                    evaluation=candidate_evaluation,
+                    vehicle_id=vehicle_id,
+                    customer_id=ejected_customer,
+                )
+            )
+        if not reinsertion_candidates:
+            return None
+        return min(
+            reinsertion_candidates,
+            key=lambda candidate: candidate.key,
+        )
+
+    while current_evaluation.unserved_customers and not limit_reached:
+        current_schedules = current_evaluation.schedules
+        selected_repair = None
+        served_locations = tuple(
+            (
+                vehicle_id,
+                trip_index,
+                customer_position,
+                customer_id,
+            )
+            for vehicle_id in sorted(current_schedules)
+            for trip_index, trip in enumerate(
+                current_schedules[vehicle_id]
+            )
+            for customer_position, customer_id in enumerate(trip)
+        )
+        current_served = set(current_evaluation.served_customers)
+
+        # Try a direct one-for-one replacement before the wider ejection scan.
+        for inserted_customer in sorted(
+            current_evaluation.unserved_customers
+        ):
+            if selected_repair is not None or limit_reached:
+                break
+            for (
+                source_vehicle_id,
+                source_trip_index,
+                source_position,
+                ejected_customer,
+            ) in served_locations:
+                if limit_reached:
+                    break
+                replacement_schedules = _copy_schedules(current_schedules)
+                replacement_schedules[source_vehicle_id][
+                    source_trip_index
+                ][source_position] = inserted_customer
+                replacement_evaluation = evaluate_candidate(
+                    replacement_schedules
+                )
+                expected_primary_served = (
+                    current_served
+                    - {ejected_customer}
+                    | {inserted_customer}
+                )
+                if (
+                    replacement_evaluation is None
+                    or not replacement_evaluation.feasible
+                    or set(replacement_evaluation.served_customers)
+                    != expected_primary_served
+                ):
+                    continue
+                inserted_candidate = _ConstructionCandidate(
+                    key=_candidate_key(
+                        current_evaluation,
+                        replacement_evaluation,
+                        source_vehicle_id,
+                        source_trip_index,
+                        inserted_customer,
+                        source_position,
+                    ),
+                    schedules=replacement_schedules,
+                    evaluation=replacement_evaluation,
+                    vehicle_id=source_vehicle_id,
+                    customer_id=inserted_customer,
+                )
+                reinsertion = find_best_reinsertion(
+                    inserted_candidate,
+                    ejected_customer,
+                    current_served | {inserted_customer},
+                )
+                if reinsertion is not None:
+                    selected_repair = (
+                        inserted_customer,
+                        ejected_customer,
+                        reinsertion,
+                    )
+                    break
+
+        # If direct replacement fails, remove one customer and try the best
+        # few positions for the unserved customer before reinsertion.
+        if selected_repair is None and not limit_reached:
+            for inserted_customer in sorted(
+                current_evaluation.unserved_customers
+            ):
+                if selected_repair is not None or limit_reached:
+                    break
+                for (
+                    source_vehicle_id,
+                    source_trip_index,
+                    source_position,
+                    ejected_customer,
+                ) in served_locations:
+                    if limit_reached:
+                        break
+                    ejected_schedules = _copy_schedules(
+                        current_schedules
+                    )
+                    ejected_schedules[source_vehicle_id][
+                        source_trip_index
+                    ].pop(source_position)
+                    if not ejected_schedules[source_vehicle_id][
+                        source_trip_index
+                    ]:
+                        ejected_schedules[source_vehicle_id].pop(
+                            source_trip_index
+                        )
+
+                    ejected_evaluation = evaluate_candidate(
+                        ejected_schedules
+                    )
+                    if (
+                        ejected_evaluation is None
+                        or not ejected_evaluation.feasible
+                    ):
+                        continue
+
+                    insertion_candidates: List[
+                        _ConstructionCandidate
+                    ] = []
+                    for (
+                        vehicle_id,
+                        trip_index,
+                        insertion_position,
+                        proposal,
+                    ) in _customer_insertion_proposals(
+                        ejected_schedules,
+                        inserted_customer,
+                    ):
+                        candidate_evaluation = evaluate_candidate(proposal)
+                        if candidate_evaluation is None:
+                            break
+                        expected_primary_served = (
+                            current_served
+                            - {ejected_customer}
+                            | {inserted_customer}
+                        )
+                        if (
+                            not candidate_evaluation.feasible
+                            or set(candidate_evaluation.served_customers)
+                            != expected_primary_served
+                        ):
+                            continue
+                        insertion_candidates.append(
+                            _ConstructionCandidate(
+                                key=_candidate_key(
+                                    ejected_evaluation,
+                                    candidate_evaluation,
+                                    vehicle_id,
+                                    trip_index,
+                                    inserted_customer,
+                                    insertion_position,
+                                ),
+                                schedules=proposal,
+                                evaluation=candidate_evaluation,
+                                vehicle_id=vehicle_id,
+                                customer_id=inserted_customer,
+                            )
+                        )
+
+                    for inserted_candidate in sorted(
+                        insertion_candidates,
+                        key=lambda candidate: candidate.key,
+                    )[:max_primary_candidates_per_ejection]:
+                        if limit_reached:
+                            break
+                        reinsertion = find_best_reinsertion(
+                            inserted_candidate,
+                            ejected_customer,
+                            current_served | {inserted_customer},
+                        )
+                        if reinsertion is not None:
+                            selected_repair = (
+                                inserted_customer,
+                                ejected_customer,
+                                reinsertion,
+                            )
+                            break
+
+                    if selected_repair is not None:
+                        break
+
+        if selected_repair is None:
+            break
+
+        (
+            inserted_customer,
+            ejected_customer,
+            selected_reinsertion,
+        ) = selected_repair
+        accepted_moves.append(
+            RepairMove(
+                inserted_customer=inserted_customer,
+                ejected_customer=ejected_customer,
+                objective_before=current_evaluation.objective,
+                objective_after=selected_reinsertion.evaluation.objective,
+            )
+        )
+        current_evaluation = selected_reinsertion.evaluation
+
+    final_evaluation = evaluate_solution(
+        instance,
+        current_evaluation.schedules,
+        scales,
+        require_all_customers=True,
+    )
+    if final_evaluation.feasible:
+        status = "feasible"
+    elif limit_reached or incomplete_candidates:
+        status = "search_limit_reached"
+    else:
+        status = "partial_infeasible"
+    if limit_stop_reason is not None:
+        stop_reason = limit_stop_reason
+    elif status == "search_limit_reached":
+        stop_reason = "charging_search_incomplete"
+    else:
+        stop_reason = "completed"
+    return RepairRun(
+        status=status,
+        stop_reason=stop_reason,
+        initial_evaluation=initial_evaluation,
+        evaluation=final_evaluation,
+        scales=scales,
+        accepted_moves=tuple(accepted_moves),
+        evaluated_candidates=evaluated_candidates,
+        incomplete_candidates=incomplete_candidates,
+        max_candidate_evaluations=max_candidate_evaluations,
+        max_seconds=max_seconds,
+        max_primary_candidates_per_ejection=(
+            max_primary_candidates_per_ejection
+        ),
+        runtime_seconds=time.perf_counter() - start,
+        construction_strategy=construction_run.construction_strategy,
+    )
+
+
+def repair_partial_solution_depth_two(
+    instance: ToyInstance,
+    initial_run: HeuristicRun | RepairRun,
+    *,
+    max_candidate_evaluations: int = 20_000,
+    max_seconds: float = 300.0,
+    max_primary_candidates: int = 100,
+    max_first_reinsertions: int = 3,
+) -> DepthTwoRepairRun:
+    """Repair a partial solution by bounded two-customer replacement."""
+    integer_limits = {
+        "max_candidate_evaluations": max_candidate_evaluations,
+        "max_primary_candidates": max_primary_candidates,
+        "max_first_reinsertions": max_first_reinsertions,
+    }
+    for label, value in integer_limits.items():
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, Integral)
+            or value <= 0
+        ):
+            raise ValueError(f"{label} must be a positive integer.")
+    if (
+        isinstance(max_seconds, bool)
+        or not isinstance(max_seconds, Real)
+        or not math.isfinite(float(max_seconds))
+        or max_seconds <= 0
+    ):
+        raise ValueError("max_seconds must be a positive finite number.")
+
+    max_candidate_evaluations = int(max_candidate_evaluations)
+    max_seconds = float(max_seconds)
+    max_primary_candidates = int(max_primary_candidates)
+    max_first_reinsertions = int(max_first_reinsertions)
+    start = time.perf_counter()
+    deadline = start + max_seconds
+    scales = initial_run.scales
+    initial_evaluation = initial_run.evaluation
+    invalid_upstream_status = (
+        isinstance(initial_run, HeuristicRun)
+        and initial_run.status == "input_data_error"
+    ) or (
+        isinstance(initial_run, RepairRun)
+        and initial_run.status == "initial_solution_infeasible"
+    )
+    if invalid_upstream_status:
+        return DepthTwoRepairRun(
+            status="initial_solution_infeasible",
+            stop_reason="initial_solution_infeasible",
+            initial_evaluation=initial_evaluation,
+            evaluation=initial_evaluation,
+            scales=scales,
+            accepted_moves=tuple(),
+            evaluated_candidates=0,
+            incomplete_candidates=0,
+            max_candidate_evaluations=max_candidate_evaluations,
+            max_seconds=max_seconds,
+            max_primary_candidates=max_primary_candidates,
+            max_first_reinsertions=max_first_reinsertions,
+            runtime_seconds=time.perf_counter() - start,
+            construction_strategy=initial_run.construction_strategy,
+        )
+    current_evaluation = evaluate_solution(
+        instance,
+        initial_evaluation.schedules,
+        scales,
+        require_all_customers=False,
+    )
+    if not current_evaluation.feasible:
+        return DepthTwoRepairRun(
+            status="initial_solution_infeasible",
+            stop_reason="initial_solution_infeasible",
+            initial_evaluation=initial_evaluation,
+            evaluation=initial_evaluation,
+            scales=scales,
+            accepted_moves=tuple(),
+            evaluated_candidates=0,
+            incomplete_candidates=0,
+            max_candidate_evaluations=max_candidate_evaluations,
+            max_seconds=max_seconds,
+            max_primary_candidates=max_primary_candidates,
+            max_first_reinsertions=max_first_reinsertions,
+            runtime_seconds=time.perf_counter() - start,
+            construction_strategy=initial_run.construction_strategy,
+        )
+
+    evaluated_candidates = 0
+    incomplete_candidates = 0
+    limit_reached = False
+    limit_stop_reason: Optional[str] = None
+    accepted_moves: List[DepthTwoRepairMove] = []
+
+    def evaluate_candidate(
+        proposal: Mapping[str, Sequence[Sequence[str]]],
+    ) -> Optional[SolutionEvaluation]:
+        nonlocal evaluated_candidates
+        nonlocal incomplete_candidates
+        nonlocal limit_reached
+        nonlocal limit_stop_reason
+
+        if evaluated_candidates >= max_candidate_evaluations:
+            limit_reached = True
+            limit_stop_reason = "candidate_limit"
+            return None
+        if time.perf_counter() >= deadline:
+            limit_reached = True
+            limit_stop_reason = "time_limit"
+            return None
+        evaluation = evaluate_solution(
+            instance,
+            proposal,
+            scales,
+            require_all_customers=False,
+        )
+        evaluated_candidates += 1
+        if _search_limit_reached(evaluation.reasons):
+            incomplete_candidates += 1
+        return evaluation
+
+    def insertion_candidates(
+        schedules: Mapping[str, Sequence[Sequence[str]]],
+        base_evaluation: SolutionEvaluation,
+        customer_id: str,
+        expected_served: set[str],
+    ) -> List[_ConstructionCandidate]:
+        candidates: List[_ConstructionCandidate] = []
+        for (
+            vehicle_id,
+            trip_index,
+            insertion_position,
+            proposal,
+        ) in _customer_insertion_proposals(schedules, customer_id):
+            evaluation = evaluate_candidate(proposal)
+            if evaluation is None:
+                break
+            if (
+                not evaluation.feasible
+                or set(evaluation.served_customers) != expected_served
+            ):
+                continue
+            candidates.append(
+                _ConstructionCandidate(
+                    key=_candidate_key(
+                        base_evaluation,
+                        evaluation,
+                        vehicle_id,
+                        trip_index,
+                        customer_id,
+                        insertion_position,
+                    ),
+                    schedules=proposal,
+                    evaluation=evaluation,
+                    vehicle_id=vehicle_id,
+                    customer_id=customer_id,
+                )
+            )
+        return sorted(candidates, key=lambda candidate: candidate.key)
+
+    while current_evaluation.unserved_customers and not limit_reached:
+        current_schedules = current_evaluation.schedules
+        current_served = set(current_evaluation.served_customers)
+        served_locations = tuple(
+            (
+                vehicle_id,
+                trip_index,
+                customer_position,
+                customer_id,
+            )
+            for vehicle_id in sorted(current_schedules)
+            for trip_index, trip in enumerate(
+                current_schedules[vehicle_id]
+            )
+            for customer_position, customer_id in enumerate(trip)
+        )
+        primary_candidates: List[_DepthTwoPrimaryCandidate] = []
+
+        for inserted_customer in sorted(
+            current_evaluation.unserved_customers
+        ):
+            if limit_reached:
+                break
+            for left_index, left_location in enumerate(
+                served_locations[:-1]
+            ):
+                if limit_reached:
+                    break
+                for right_location in served_locations[left_index + 1 :]:
+                    if limit_reached:
+                        break
+                    for anchor, removed in (
+                        (left_location, right_location),
+                        (right_location, left_location),
+                    ):
+                        if limit_reached:
+                            break
+                        (
+                            anchor_vehicle,
+                            anchor_trip,
+                            anchor_position,
+                            anchor_customer,
+                        ) = anchor
+                        (
+                            removed_vehicle,
+                            removed_trip,
+                            removed_position,
+                            removed_customer,
+                        ) = removed
+                        proposal = _copy_schedules(current_schedules)
+                        proposal[anchor_vehicle][anchor_trip][
+                            anchor_position
+                        ] = inserted_customer
+                        proposal[removed_vehicle][removed_trip].pop(
+                            removed_position
+                        )
+                        if not proposal[removed_vehicle][removed_trip]:
+                            proposal[removed_vehicle].pop(removed_trip)
+
+                        evaluation = evaluate_candidate(proposal)
+                        if evaluation is None:
+                            break
+                        expected_primary = (
+                            current_served
+                            - {anchor_customer, removed_customer}
+                            | {inserted_customer}
+                        )
+                        if (
+                            not evaluation.feasible
+                            or set(evaluation.served_customers)
+                            != expected_primary
+                        ):
+                            continue
+                        primary_candidates.append(
+                            _DepthTwoPrimaryCandidate(
+                                key=(
+                                    evaluation.objective,
+                                    evaluation.total_risk,
+                                    evaluation.total_cost,
+                                    evaluation.total_time_minutes,
+                                    inserted_customer,
+                                    anchor_customer,
+                                    removed_customer,
+                                    _schedule_key(evaluation.schedules),
+                                ),
+                                schedules=proposal,
+                                evaluation=evaluation,
+                                inserted_customer=inserted_customer,
+                                ejected_customers=(
+                                    anchor_customer,
+                                    removed_customer,
+                                ),
+                            )
+                        )
+
+        selected_repair = None
+        for primary in sorted(
+            primary_candidates,
+            key=lambda candidate: candidate.key,
+        )[:max_primary_candidates]:
+            if limit_reached:
+                break
+            first_customer, second_customer = primary.ejected_customers
+            orders = (
+                (first_customer, second_customer),
+                (second_customer, first_customer),
+            )
+            primary_completions = []
+            for reinsertion_order in orders:
+                if limit_reached:
+                    break
+                first_expected = (
+                    set(primary.evaluation.served_customers)
+                    | {reinsertion_order[0]}
+                )
+                first_candidates = insertion_candidates(
+                    primary.schedules,
+                    primary.evaluation,
+                    reinsertion_order[0],
+                    first_expected,
+                )
+                for first_candidate in first_candidates[
+                    :max_first_reinsertions
+                ]:
+                    if limit_reached:
+                        break
+                    final_expected = current_served | {
+                        primary.inserted_customer
+                    }
+                    second_candidates = insertion_candidates(
+                        first_candidate.schedules,
+                        first_candidate.evaluation,
+                        reinsertion_order[1],
+                        final_expected,
+                    )
+                    if second_candidates:
+                        primary_completions.append(
+                            (
+                                primary,
+                                reinsertion_order,
+                                second_candidates[0],
+                            )
+                        )
+            if primary_completions:
+                selected_repair = min(
+                    primary_completions,
+                    key=lambda completion: (
+                        completion[2].evaluation.objective,
+                        completion[2].evaluation.total_risk,
+                        completion[2].evaluation.total_cost,
+                        completion[2].evaluation.total_time_minutes,
+                        _schedule_key(
+                            completion[2].evaluation.schedules
+                        ),
+                        completion[1],
+                    ),
+                )
+                break
+
+        if selected_repair is None:
+            break
+
+        primary, reinsertion_order, final_candidate = selected_repair
+        accepted_moves.append(
+            DepthTwoRepairMove(
+                inserted_customer=primary.inserted_customer,
+                ejected_customers=primary.ejected_customers,
+                reinsertion_order=reinsertion_order,
+                objective_before=current_evaluation.objective,
+                objective_after=final_candidate.evaluation.objective,
+            )
+        )
+        current_evaluation = final_candidate.evaluation
+
+    final_evaluation = evaluate_solution(
+        instance,
+        current_evaluation.schedules,
+        scales,
+        require_all_customers=True,
+    )
+    if final_evaluation.feasible:
+        status = "feasible"
+    elif limit_reached or incomplete_candidates:
+        status = "search_limit_reached"
+    else:
+        status = "partial_infeasible"
+    if limit_stop_reason is not None:
+        stop_reason = limit_stop_reason
+    elif status == "search_limit_reached":
+        stop_reason = "charging_search_incomplete"
+    else:
+        stop_reason = "completed"
+    return DepthTwoRepairRun(
+        status=status,
+        stop_reason=stop_reason,
+        initial_evaluation=initial_evaluation,
+        evaluation=final_evaluation,
+        scales=scales,
+        accepted_moves=tuple(accepted_moves),
+        evaluated_candidates=evaluated_candidates,
+        incomplete_candidates=incomplete_candidates,
+        max_candidate_evaluations=max_candidate_evaluations,
+        max_seconds=max_seconds,
+        max_primary_candidates=max_primary_candidates,
+        max_first_reinsertions=max_first_reinsertions,
+        runtime_seconds=time.perf_counter() - start,
+        construction_strategy=initial_run.construction_strategy,
     )
 
 
@@ -3034,7 +3988,7 @@ def _vnd_candidate_key(
 
 def improve_solution_vnd(
     instance: ToyInstance,
-    initial_run: HeuristicRun,
+    initial_run: HeuristicRun | RepairRun | DepthTwoRepairRun,
     *,
     max_neighborhood_passes: int = 1_000,
     deadline: Optional[float] = None,
@@ -3533,6 +4487,79 @@ def summarize_run(run: HeuristicRun) -> str:
     )
     if result.reasons:
         lines.append("reasons=" + " | ".join(result.reasons))
+    return "\n".join(lines)
+
+
+def summarize_repair_run(run: RepairRun) -> str:
+    """Summarize deterministic depth-one ejection repair."""
+    lines = [
+        "Depth-one ejection repair",
+        "-" * 25,
+        f"status={run.status}",
+        f"stop_reason={run.stop_reason}",
+        (
+            "initial_served_customers="
+            f"{len(run.initial_evaluation.served_customers)}"
+        ),
+        f"final_served_customers={len(run.evaluation.served_customers)}",
+        f"unserved_customers={len(run.evaluation.unserved_customers)}",
+        f"accepted_moves={len(run.accepted_moves)}",
+        f"evaluated_candidates={run.evaluated_candidates}",
+        f"incomplete_candidates={run.incomplete_candidates}",
+        (
+            "max_candidate_evaluations="
+            f"{run.max_candidate_evaluations}"
+        ),
+        f"max_seconds={run.max_seconds:.6f}",
+        (
+            "max_primary_candidates_per_ejection="
+            f"{run.max_primary_candidates_per_ejection}"
+        ),
+        f"runtime_seconds={run.runtime_seconds:.6f}",
+    ]
+    for move_index, move in enumerate(run.accepted_moves, start=1):
+        lines.append(
+            f"move_{move_index}=insert {move.inserted_customer}, "
+            f"temporarily eject and reinsert {move.ejected_customer} "
+            f"({move.objective_before:.6f} -> "
+            f"{move.objective_after:.6f})"
+        )
+    return "\n".join(lines)
+
+
+def summarize_depth_two_repair_run(run: DepthTwoRepairRun) -> str:
+    """Summarize bounded depth-two ejection repair."""
+    lines = [
+        "Depth-two ejection repair",
+        "-" * 25,
+        f"status={run.status}",
+        f"stop_reason={run.stop_reason}",
+        (
+            "initial_served_customers="
+            f"{len(run.initial_evaluation.served_customers)}"
+        ),
+        f"final_served_customers={len(run.evaluation.served_customers)}",
+        f"unserved_customers={len(run.evaluation.unserved_customers)}",
+        f"accepted_moves={len(run.accepted_moves)}",
+        f"evaluated_candidates={run.evaluated_candidates}",
+        f"incomplete_candidates={run.incomplete_candidates}",
+        (
+            "max_candidate_evaluations="
+            f"{run.max_candidate_evaluations}"
+        ),
+        f"max_seconds={run.max_seconds:.6f}",
+        f"max_primary_candidates={run.max_primary_candidates}",
+        f"max_first_reinsertions={run.max_first_reinsertions}",
+        f"runtime_seconds={run.runtime_seconds:.6f}",
+    ]
+    for move_index, move in enumerate(run.accepted_moves, start=1):
+        lines.append(
+            f"move_{move_index}=insert {move.inserted_customer}, "
+            f"temporarily eject {','.join(move.ejected_customers)}, "
+            f"reinsert as {','.join(move.reinsertion_order)} "
+            f"({move.objective_before:.6f} -> "
+            f"{move.objective_after:.6f})"
+        )
     return "\n".join(lines)
 
 
