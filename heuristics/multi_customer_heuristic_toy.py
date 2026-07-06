@@ -315,6 +315,7 @@ class VNDRun:
     initial_evaluation: SolutionEvaluation
     evaluation: SolutionEvaluation
     scales: ObjectiveScales
+    max_neighborhood_passes: int
     accepted_moves: Tuple[VNDMove, ...]
     evaluated_candidates: int
     incomplete_candidates: int
@@ -341,6 +342,9 @@ class VNSRun:
     evaluation: SolutionEvaluation
     scales: ObjectiveScales
     random_seed: int
+    max_iterations: int
+    max_seconds: float
+    max_vnd_neighborhood_passes: int
     iterations: int
     accepted_improvements: Tuple[VNSImprovement, ...]
     evaluated_shakes: int
@@ -4012,6 +4016,7 @@ def improve_solution_vnd(
     ):
         raise ValueError("deadline must be a finite monotonic timestamp.")
 
+    max_neighborhood_passes = int(max_neighborhood_passes)
     start = time.perf_counter()
     initial_evaluation = initial_run.evaluation
     if (
@@ -4024,6 +4029,7 @@ def improve_solution_vnd(
             initial_evaluation=initial_evaluation,
             evaluation=initial_evaluation,
             scales=initial_run.scales,
+            max_neighborhood_passes=max_neighborhood_passes,
             accepted_moves=tuple(),
             evaluated_candidates=0,
             incomplete_candidates=0,
@@ -4129,6 +4135,7 @@ def improve_solution_vnd(
         initial_evaluation=initial_evaluation,
         evaluation=current_evaluation,
         scales=initial_run.scales,
+        max_neighborhood_passes=max_neighborhood_passes,
         accepted_moves=tuple(accepted_moves),
         evaluated_candidates=evaluated_candidates,
         incomplete_candidates=incomplete_candidates,
@@ -4210,8 +4217,11 @@ def improve_solution_vns(
             "max_vnd_neighborhood_passes must be a positive integer."
         )
 
+    max_iterations = int(max_iterations)
+    max_seconds = float(max_seconds)
+    max_vnd_neighborhood_passes = int(max_vnd_neighborhood_passes)
     start = time.perf_counter()
-    deadline = start + float(max_seconds)
+    deadline = start + max_seconds
     initial_evaluation = initial_vnd_run.evaluation
     seed = int(random_seed)
     if (
@@ -4224,6 +4234,9 @@ def improve_solution_vns(
             evaluation=initial_evaluation,
             scales=initial_vnd_run.scales,
             random_seed=seed,
+            max_iterations=max_iterations,
+            max_seconds=max_seconds,
+            max_vnd_neighborhood_passes=max_vnd_neighborhood_passes,
             iterations=0,
             accepted_improvements=tuple(),
             evaluated_shakes=0,
@@ -4388,6 +4401,9 @@ def improve_solution_vns(
         evaluation=current_evaluation,
         scales=initial_vnd_run.scales,
         random_seed=seed,
+        max_iterations=max_iterations,
+        max_seconds=max_seconds,
+        max_vnd_neighborhood_passes=max_vnd_neighborhood_passes,
         iterations=iterations,
         accepted_improvements=tuple(accepted_improvements),
         evaluated_shakes=evaluated_shakes,

@@ -1,7 +1,7 @@
 """Toy prototype for the HMVRP risk-cost path heuristic.
 
 This is not the final real-data implementation. It uses a small hardcoded
-instance to show the algorithmic logic from heuristic_design.md:
+instance to show the lower-level OD logic documented in README.md:
 
 - filter forbidden edges by hazardous-material class;
 - generate candidate origin-destination paths;

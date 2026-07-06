@@ -1,29 +1,72 @@
 from dataclasses import replace
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
 import pandas as pd
 
+import heuristics.multi_customer_small_adapter as legacy_adapter
 from heuristics.multi_customer_heuristic_toy import (
     DEPOT,
     InputDataError,
     ObjectiveWeights,
     build_toy_instance,
     construct_initial_solution,
+    improve_solution_vnd,
+    improve_solution_vns,
     repair_partial_solution_depth_one,
     repair_partial_solution_depth_two,
 )
-from heuristics.multi_customer_small_adapter import (
+from heuristics.precomputed_matrix_adapter import (
+    MatrixAdapterResult,
     SmallAdapterResult,
+    build_matrix_adapter,
     build_small_adapter,
+    build_result_payload,
     build_warm_start_payload,
+    export_result_json,
     export_warm_start_json,
 )
 
 
-class MultiCustomerSmallAdapterTests(unittest.TestCase):
+class PrecomputedMatrixAdapterTests(unittest.TestCase):
+    def test_legacy_small_adapter_names_remain_compatible(self) -> None:
+        self.assertIs(SmallAdapterResult, MatrixAdapterResult)
+        self.assertIs(build_small_adapter, build_matrix_adapter)
+        self.assertIs(build_warm_start_payload, build_result_payload)
+        self.assertIs(export_warm_start_json, export_result_json)
+        self.assertIs(
+            legacy_adapter.build_small_adapter,
+            build_matrix_adapter,
+        )
+        self.assertIs(
+            legacy_adapter.export_warm_start_json,
+            export_result_json,
+        )
+
+    def test_legacy_module_cli_forwards_to_new_adapter(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                "-m",
+                "heuristics.multi_customer_small_adapter",
+                "--help",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--data-dir", result.stdout)
+        self.assertIn("--output-json", result.stdout)
+
     def test_default_objective_weights_include_time(self) -> None:
         self.assertEqual(
             ObjectiveWeights(),
@@ -167,7 +210,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             small_dir = self._write_fixture(Path(directory))
 
-            result = build_small_adapter(small_dir)
+            result = build_matrix_adapter(small_dir)
             run = construct_initial_solution(result.instance)
 
         self.assertEqual(result.included_customers, ("C1", "C2"))
@@ -205,7 +248,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 medium_dir / "od_matrix_small_charger.csv"
             ).rename(medium_dir / "od_matrix_medium_charger.csv")
 
-            result = build_small_adapter(medium_dir)
+            result = build_matrix_adapter(medium_dir)
 
         self.assertEqual(result.dataset_name, "Medium")
         self.assertEqual(
@@ -233,7 +276,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 InputDataError,
                 "Several OD matrix CSV files were found",
             ):
-                build_small_adapter(small_dir)
+                build_matrix_adapter(small_dir)
 
     def test_rejects_ambiguous_charger_matrix_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -247,7 +290,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 InputDataError,
                 "Several charger matrix CSV files were found",
             ):
-                build_small_adapter(small_dir)
+                build_matrix_adapter(small_dir)
 
     def test_accepts_explicit_regular_od_matrix_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -256,7 +299,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
             explicit_file = small_dir / "regular_routes.csv"
             default_file.rename(explicit_file)
 
-            result = build_small_adapter(
+            result = build_matrix_adapter(
                 small_dir,
                 od_matrix_file=explicit_file,
             )
@@ -276,7 +319,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 time=0.2,
             )
 
-            result = build_small_adapter(
+            result = build_matrix_adapter(
                 small_dir,
                 weights=weights,
             )
@@ -293,7 +336,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 infinite_relation=("C2", DEPOT),
             )
 
-            result = build_small_adapter(small_dir)
+            result = build_matrix_adapter(small_dir)
 
         self.assertNotIn((DEPOT, "C2"), result.instance.legs)
         self.assertNotIn(("C2", DEPOT), result.instance.legs)
@@ -304,7 +347,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             small_dir = self._write_fixture(Path(directory))
 
-            result = build_small_adapter(small_dir)
+            result = build_matrix_adapter(small_dir)
 
         self.assertEqual(
             result.instance.customer_charger_candidates["C1"],
@@ -342,7 +385,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            result = build_small_adapter(
+            result = build_matrix_adapter(
                 small_dir,
                 vehicle_hazard_compatibility_file=compatibility_file,
             )
@@ -380,7 +423,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             small_dir = self._write_fixture(Path(directory))
 
-            result = build_small_adapter(
+            result = build_matrix_adapter(
                 small_dir,
                 vehicle_hazard_compatibility={
                     "MAN_eTGX": ("3", "8"),
@@ -400,7 +443,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 InputDataError,
                 "unsupported hazard classes: 99",
             ):
-                build_small_adapter(
+                build_matrix_adapter(
                     small_dir,
                     vehicle_hazard_compatibility={
                         "MAN_eTGX": ("3", "99"),
@@ -415,7 +458,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 InputDataError,
                 "No vehicle supports instance hazard classes: 3",
             ):
-                build_small_adapter(
+                build_matrix_adapter(
                     small_dir,
                     vehicle_hazard_compatibility={
                         "MAN_eTGX": ("8",),
@@ -438,7 +481,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 InputDataError,
                 "duplicate safest loaded pairs",
             ):
-                build_small_adapter(small_dir)
+                build_matrix_adapter(small_dir)
 
     def test_rejects_charger_duplicate_after_whitespace_trim(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -458,7 +501,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 InputDataError,
                 "duplicate safest rows",
             ):
-                build_small_adapter(small_dir)
+                build_matrix_adapter(small_dir)
 
     def test_accepts_explicit_charger_matrix_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -469,7 +512,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
             explicit_file = small_dir / "charger_explicit.csv"
             default_file.rename(explicit_file)
 
-            result = build_small_adapter(
+            result = build_matrix_adapter(
                 small_dir,
                 charger_matrix_file=explicit_file,
             )
@@ -487,12 +530,12 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             small_dir = self._write_fixture(Path(directory))
 
-            result = build_small_adapter(
+            result = build_matrix_adapter(
                 small_dir,
                 excluded_customers=("C2",),
             )
             run = construct_initial_solution(result.instance)
-            payload = build_warm_start_payload(
+            payload = build_result_payload(
                 result,
                 run.evaluation,
                 construction_run=run,
@@ -522,7 +565,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 InputDataError,
                 "Unknown excluded customer IDs",
             ):
-                build_small_adapter(
+                build_matrix_adapter(
                     small_dir,
                     excluded_customers=("C99",),
                 )
@@ -538,13 +581,13 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 InputDataError,
                 "missing required columns: cost",
             ):
-                build_small_adapter(small_dir)
+                build_matrix_adapter(small_dir)
 
-    def test_exports_solver_warm_start_json(self) -> None:
+    def test_exports_result_json(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             small_dir = self._write_fixture(root)
-            adapter = build_small_adapter(small_dir)
+            adapter = build_matrix_adapter(small_dir)
             run = construct_initial_solution(adapter.instance)
             repair = repair_partial_solution_depth_one(
                 adapter.instance,
@@ -561,9 +604,9 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 max_primary_candidates=8,
                 max_first_reinsertions=2,
             )
-            output_path = root / "output" / "warm_start.json"
+            output_path = root / "output" / "result.json"
 
-            exported_path = export_warm_start_json(
+            exported_path = export_result_json(
                 adapter,
                 repair.evaluation,
                 output_path,
@@ -652,6 +695,102 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
             run.scales.risk,
         )
         self.assertIn("total_algorithm", payload["runtime_seconds"])
+        self.assertIsNone(payload["metadata"]["vnd"])
+        self.assertIsNone(payload["metadata"]["vns"])
+        vehicle_schedule = payload["schedule_details"]["MAN_eTGX"]
+        self.assertTrue(vehicle_schedule["trips"])
+        first_trip = vehicle_schedule["trips"][0]
+        self.assertTrue(first_trip["visits"])
+        self.assertTrue(first_trip["legs"])
+        self.assertIn("arrival_minute", first_trip["visits"][0])
+        self.assertIn("battery_before_kwh", first_trip["legs"][0])
+
+    def test_exports_actual_vnd_vns_configuration_and_diagnostics(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            small_dir = self._write_fixture(Path(directory))
+            adapter = build_matrix_adapter(small_dir)
+            construction = construct_initial_solution(adapter.instance)
+            repair = repair_partial_solution_depth_one(
+                adapter.instance,
+                construction,
+            )
+            vnd = improve_solution_vnd(
+                adapter.instance,
+                repair,
+                max_neighborhood_passes=7,
+            )
+            vns = improve_solution_vns(
+                adapter.instance,
+                vnd,
+                random_seed=73,
+                max_iterations=3,
+                max_seconds=5.0,
+                max_vnd_neighborhood_passes=5,
+            )
+
+            payload = build_result_payload(
+                adapter,
+                vns.evaluation,
+                construction_run=construction,
+                search_status=vns.status,
+                runtime_seconds={
+                    "construction": construction.runtime_seconds,
+                    "repair": repair.runtime_seconds,
+                    "vnd": vnd.runtime_seconds,
+                    "vns": vns.runtime_seconds,
+                },
+                repair_run=repair,
+                vnd_run=vnd,
+                vns_run=vns,
+            )
+
+            with self.assertRaisesRegex(
+                InputDataError,
+                "Final evaluation does not match",
+            ):
+                build_result_payload(
+                    adapter,
+                    replace(
+                        vns.evaluation,
+                        objective=vns.evaluation.objective + 1.0,
+                    ),
+                    construction_run=construction,
+                    search_status=vns.status,
+                    runtime_seconds={},
+                    vnd_run=vnd,
+                    vns_run=vns,
+                )
+
+        vnd_metadata = payload["metadata"]["vnd"]
+        self.assertEqual(vnd_metadata["max_neighborhood_passes"], 7)
+        self.assertEqual(
+            vnd_metadata["initial_objective"],
+            vnd.initial_evaluation.objective,
+        )
+        self.assertEqual(
+            vnd_metadata["final_objective"],
+            vnd.evaluation.objective,
+        )
+        self.assertIn("accepted_moves", vnd_metadata)
+        self.assertIn("incomplete_neighborhoods", vnd_metadata)
+
+        vns_metadata = payload["metadata"]["vns"]
+        self.assertEqual(vns_metadata["random_seed"], 73)
+        self.assertEqual(vns_metadata["max_iterations"], 3)
+        self.assertEqual(vns_metadata["max_seconds"], 5.0)
+        self.assertEqual(
+            vns_metadata["max_vnd_neighborhood_passes"],
+            5,
+        )
+        self.assertEqual(
+            vns_metadata["final_objective"],
+            payload["objective"]["value"],
+        )
+        self.assertIn("accepted_improvements", vns_metadata)
+        self.assertIn("evaluated_shakes", vns_metadata)
+        self.assertIn("incomplete_local_searches", vns_metadata)
 
     def test_infeasible_json_has_no_stale_routes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -660,10 +799,10 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 tunnel_relation=(DEPOT, "C2"),
                 infinite_relation=("C2", DEPOT),
             )
-            adapter = build_small_adapter(small_dir)
+            adapter = build_matrix_adapter(small_dir)
             run = construct_initial_solution(adapter.instance)
 
-            payload = build_warm_start_payload(
+            payload = build_result_payload(
                 adapter,
                 run.evaluation,
                 construction_run=run,
@@ -685,7 +824,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
     def test_rejects_invalid_runtime_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             small_dir = self._write_fixture(Path(directory))
-            adapter = build_small_adapter(small_dir)
+            adapter = build_matrix_adapter(small_dir)
             run = construct_initial_solution(adapter.instance)
 
             for invalid_runtime in (-1.0, float("nan"), float("inf")):
@@ -694,7 +833,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                         InputDataError,
                         "runtime_seconds.construction",
                     ):
-                        build_warm_start_payload(
+                        build_result_payload(
                             adapter,
                             run.evaluation,
                             construction_run=run,
@@ -708,7 +847,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
     def test_charging_side_trips_are_exported_separately(self) -> None:
         instance = build_toy_instance()
         run = construct_initial_solution(instance)
-        adapter = SmallAdapterResult(
+        adapter = MatrixAdapterResult(
             instance=instance,
             dataset_name="toy",
             source_files={},
@@ -728,7 +867,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
             warnings=tuple(),
         )
 
-        payload = build_warm_start_payload(
+        payload = build_result_payload(
             adapter,
             run.evaluation,
             construction_run=run,
@@ -764,13 +903,13 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
     def test_payload_uses_actual_construction_strategy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             small_dir = self._write_fixture(Path(directory))
-            adapter = build_small_adapter(small_dir)
+            adapter = build_matrix_adapter(small_dir)
             run = construct_initial_solution(
                 adapter.instance,
                 construction_strategy="regret_2",
             )
 
-            payload = build_warm_start_payload(
+            payload = build_result_payload(
                 adapter,
                 run.evaluation,
                 construction_run=run,
@@ -788,7 +927,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
     def test_payload_rejects_invalid_run_strategy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             small_dir = self._write_fixture(Path(directory))
-            adapter = build_small_adapter(small_dir)
+            adapter = build_matrix_adapter(small_dir)
             run = construct_initial_solution(adapter.instance)
             invalid_run = replace(
                 run,
@@ -799,7 +938,7 @@ class MultiCustomerSmallAdapterTests(unittest.TestCase):
                 InputDataError,
                 "invalid construction strategy",
             ):
-                build_warm_start_payload(
+                build_result_payload(
                     adapter,
                     run.evaluation,
                     construction_run=invalid_run,

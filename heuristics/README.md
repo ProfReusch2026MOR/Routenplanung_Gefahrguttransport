@@ -1,4 +1,196 @@
-# Heuristic Design for Hazardous Materials Vehicle Routing
+# Multi-Customer Hazardous Materials Routing Heuristic
+
+This README documents the heuristic design, implementation modules, input
+contract, and solver-comparison output.
+
+## Quick Start
+
+Main modules:
+
+- `multi_customer_heuristic_toy.py` contains the shared multi-customer
+  algorithm and its in-memory toy instance. The filename is retained because
+  the executable example remains part of the module.
+- `precomputed_matrix_adapter.py` loads precomputed Small, Medium, or Large
+  customer, vehicle, OD, and charging matrices.
+- `multi_customer_small_adapter.py` is a compatibility wrapper for existing
+  notebooks and commands. New code should use `precomputed_matrix_adapter`.
+- `risk_cost_path_heuristic_toy.py` demonstrates the earlier lower-level OD
+  path logic and is not the final multi-customer workflow.
+
+### Expected Data Layout
+
+The adapter expects one coherent instance directory and a vehicle file:
+
+```text
+<data-root>/
+    vehicles.csv
+    <instance-directory>/
+        *instanz_*Timo.csv
+        od_matrix_<name>.csv
+        od_matrix_<name>_charger.csv
+```
+
+The exact filenames may differ. Automatic selection works only when the
+instance directory contains exactly one matching instance file, one regular
+OD matrix, and one charger OD matrix. Otherwise, select all three files
+explicitly.
+
+### Basic CLI Usage
+
+Run a matrix-backed Small, Medium, or Large baseline:
+
+```text
+python -m heuristics.precomputed_matrix_adapter --data-dir <instance-directory> --vehicles-file <vehicles.csv> --output-json <result.json>
+```
+
+When the directory contains ambiguous filenames:
+
+```text
+python -m heuristics.precomputed_matrix_adapter --data-dir <instance-directory> --vehicles-file <vehicles.csv> --instance-file <instance.csv> --od-matrix-file <od-matrix.csv> --charger-matrix-file <charger-matrix.csv> --output-json <result.json>
+```
+
+Run the cost-oriented Small scenario:
+
+```text
+python -m heuristics.precomputed_matrix_adapter --data-dir <instance-directory> --vehicles-file <vehicles.csv> --exclude-customer C10 --risk-weight 0.3 --cost-weight 0.5 --time-weight 0.2 --max-charging-branch-evaluations 1000 --output-json <result.json>
+```
+
+`--exclude-customer` may be repeated. Excluding a customer changes the
+instance and must be documented; solver comparison is valid only when both
+methods use the same customer set.
+
+The legacy entry point still forwards to the same implementation:
+
+```text
+python -m heuristics.multi_customer_small_adapter --help
+```
+
+New scripts should use `heuristics.precomputed_matrix_adapter`.
+
+### CLI Parameters
+
+Input selection:
+
+| Parameter | Required | Default | Meaning |
+|---|---:|---|---|
+| `--data-dir` | yes | none | Directory containing one coherent instance and its OD matrices. |
+| `--vehicles-file` | no | `<data-dir>/../vehicles.csv` | Vehicle fleet CSV. |
+| `--instance-file` | no | unique `*instanz_*Timo.csv` | Explicit customer/depot instance CSV. |
+| `--od-matrix-file` | no | unique non-charger `od_matrix_*.csv` | Regular customer/depot OD matrix. |
+| `--charger-matrix-file` | no | unique charger `od_matrix_*.csv` | Charging-station OD matrix. |
+| `--vehicle-hazard-compatibility-file` | no | none | JSON object mapping each vehicle ID to its allowed hazard classes. |
+| `--exclude-customer` | no | none | Customer ID removed from the run; repeat the option for several IDs. |
+| `--output-json` | no | none | Writes the machine-readable result JSON. Without it, summaries are printed only. |
+
+The optional hazard-compatibility file is a JSON object:
+
+```json
+{
+  "MAN_eTGX_1": ["3", "8"],
+  "Volvo_FH_Electric_1": ["3"]
+}
+```
+
+Objective configuration:
+
+| Parameter | Default | Meaning |
+|---|---:|---|
+| `--risk-weight` | `0.5` | Weight of normalized total risk. |
+| `--cost-weight` | `0.3` | Weight of normalized total cost. |
+| `--time-weight` | `0.2` | Weight of normalized operating time. |
+
+All weights must be non-negative and must sum to `1.0`.
+
+Search configuration:
+
+| Parameter | Default | Meaning |
+|---|---:|---|
+| `--construction-strategy` | `best_insertion` | New-trip seed rule: `best_insertion`, `regret_2`, or `hardest_first`. Trip extension always uses best insertion. |
+| `--repair-evaluations` | `20000` | Maximum depth-one repair candidate evaluations. |
+| `--repair-seconds` | `300` | Depth-one repair time limit in seconds. |
+| `--vnd-passes` | `1000` | Maximum deterministic VND neighborhood passes. |
+| `--vns-seconds` | `10` | VNS runtime limit in seconds. |
+| `--random-seed` | `42` | Reproducible VNS shaking seed. |
+| `--max-charging-branch-evaluations` | `100` | Charging-state branch limit for each schedule evaluation. Larger instances may require a larger value such as `1000`. |
+
+The CLI executes:
+
+```text
+adapter -> construction -> depth-one repair -> VND -> VNS -> validation -> JSON
+```
+
+It does not currently expose the scenario timing parameters or limited
+depth-two repair. Use the Python API for experiments that need them.
+
+### Python API for Custom Scenarios
+
+`build_matrix_adapter()` additionally accepts the following scenario
+parameters:
+
+| Parameter | Default | Unit / meaning |
+|---|---:|---|
+| `service_minutes` | `30` | Service duration per customer. |
+| `shift_start_minute` | `0` | Vehicle shift start. |
+| `shift_end_minute` | `600` | Vehicle shift end. |
+| `initial_load_minutes` | `20` | Initial depot loading time. |
+| `reload_minutes` | `15` | Reload time before another trip. |
+| `max_daily_driving_minutes` | `540` | Maximum daily driving time. |
+| `max_daily_working_minutes` | `600` | Maximum daily working time. |
+| `continuous_driving_limit_minutes` | `270` | Driving time before a qualifying break. |
+| `break_duration_minutes` | `45` | Driver-break duration. |
+| `reserve_fraction` | `0.10` | Minimum battery reserve as a fraction of usable battery. |
+| `depot_charging_power_kw` | `300` | Depot charging power. |
+| `depot_energy_price_per_kwh` | `0.35` | Depot energy price. |
+| `charger_power_kw` | `300` | Public-station charging power. |
+| `charger_energy_price_per_kwh` | `0.75` | Public-station energy price. |
+| `charger_session_fee` | `0` | Fixed public charging-session fee. |
+
+For example, a custom 780-minute scenario can be constructed with:
+
+```python
+from pathlib import Path
+
+from heuristics.multi_customer_heuristic_toy import (
+    ObjectiveWeights,
+    construct_initial_solution,
+    repair_partial_solution_depth_one,
+    repair_partial_solution_depth_two,
+)
+from heuristics.precomputed_matrix_adapter import build_matrix_adapter
+
+adapter = build_matrix_adapter(
+    Path("<instance-directory>"),
+    vehicles_file=Path("<vehicles.csv>"),
+    instance_file=Path("<instance.csv>"),
+    od_matrix_file=Path("<od-matrix.csv>"),
+    charger_matrix_file=Path("<charger-matrix.csv>"),
+    shift_end_minute=780.0,
+    max_daily_working_minutes=780.0,
+    max_charging_branch_evaluations=1000,
+    weights=ObjectiveWeights(risk=0.5, cost=0.3, time=0.2),
+)
+
+construction = construct_initial_solution(adapter.instance)
+depth_one = repair_partial_solution_depth_one(
+    adapter.instance,
+    construction,
+)
+depth_two = repair_partial_solution_depth_two(
+    adapter.instance,
+    depth_one,
+)
+```
+
+Only pass a repair result to VND when its status and evaluation are feasible.
+The complete experiment workflow must record all configured limits, runtime
+stages, objective scales, random seed, and stop reasons in the exported
+result.
+
+Run the complete test suite:
+
+```text
+python -m unittest discover -s heuristics -p "test_*.py"
+```
 
 ## 1. Scope
 
@@ -511,7 +703,7 @@ customer -> candidate charging station
 candidate charging station -> the same customer
 ```
 
-For the Small and Medium instances, each customer keeps at most its three nearest charging stations by rule-feasible road distance. Straight-line distance may shortlist stations, but it does not determine final feasibility or rank. The two charging paths are stored separately because one-way roads and direction-specific restrictions can make them different.
+For every matrix-backed instance, each customer keeps at most its three nearest charging stations by rule-feasible road distance. Straight-line distance may shortlist stations, but it does not determine final feasibility or rank. The two charging paths are stored separately because one-way roads and direction-specific restrictions can make them different.
 
 Candidate profiles may include:
 
@@ -693,7 +885,7 @@ result is `search_limit_reached`, not proof that no feasible repair exists.
 Each repair result also stores the configured limits and one stop reason:
 `completed`, `candidate_limit`, `time_limit`,
 `charging_search_incomplete`, or `initial_solution_infeasible`. These fields
-are included in the text summary and warm-start metadata so experiment runs
+are included in the text summary and result metadata so experiment runs
 can be reproduced.
 
 ### 7.6 Limited Depth-Two Repair
@@ -703,8 +895,9 @@ depth-two step may temporarily remove two served customers. The unserved
 customer replaces one of their positions, after which both removed customers
 are reinserted in both possible orders. Only a fixed number of the best
 primary candidates is continued, and the same candidate and time limits
-remain active. This is an optional diagnostic repair, not part of the default
-Small/Medium baseline.
+remain active. This optional repair is skipped when construction or
+depth-one repair already serves every customer; it was required for the
+complete Large-instance heuristic result.
 
 Within the active limits, feasible completions from both reinsertion orders
 are compared by objective, risk, cost, time, and the deterministic schedule
@@ -915,7 +1108,14 @@ For every unserved customer, the result keeps distinct rejection reasons from bo
 
 ## 11. Output
 
-The target output consists of three main files.
+The primary output is one machine-readable JSON document. Derived comparison
+tables, maps, or text summaries may be generated from the same payload.
+`metadata.repair`, `metadata.depth_two_repair`, `metadata.vnd`, and
+`metadata.vns` preserve the configuration, status, stop reason, and search
+diagnostics of the stages that were actually executed. `schedule_details`
+contains each vehicle's trips, visits, legs, timing, load, battery, charging,
+break, risk, and cost state. The export rejects a final evaluation, status, or
+objective scale that does not match the supplied VND/VNS run.
 
 ### Run Summary
 
@@ -957,6 +1157,7 @@ vns_iterations_and_accepted_improvements
 vns_shake_and_nested_vnd_statistics
 vns_incomplete_search_diagnostics
 repair_status_moves_candidates_and_runtime
+repair_limits_and_stop_reason
 ```
 
 ### Selected Trips and Stops
@@ -979,9 +1180,9 @@ final_vehicle_battery
 
 `stop_sequence` preserves charging stations and technical customer revisits, for example `Customer i -> Station h -> Customer i`. A customer-order-only sequence is insufficient for checking battery, time, risk, and cost.
 
-### Solver Warm Start
+### Solver-Compatible Route View
 
-The formal solver-facing object is:
+The JSON contains a compact solver-facing route view:
 
 ```python
 heuristic_routes = {
@@ -989,7 +1190,7 @@ heuristic_routes = {
 }
 ```
 
-Its key is the solver's unique physical-vehicle name (`solver_name`, falling back to vehicle type). Its list contains only customers and depot nodes because the current solver creates warm-start arc variables only for those nodes. Several trips by one vehicle are flattened with an intermediate `DEPOT`. Charging stations and technical revisits remain in the full selected-stop output and are not discarded from heuristic evaluation.
+Its key is the solver's unique physical-vehicle name (`solver_name`, falling back to vehicle type). Its list contains only customers and depot nodes. Several trips by one vehicle are flattened with an intermediate `DEPOT`. Charging stations and technical revisits remain in the full selected-stop output and are not discarded from heuristic evaluation. This is an exchange representation; it becomes a warm start only after a solver importer validates and applies it.
 
 ### Selected Legs or Edges
 
@@ -1160,14 +1361,20 @@ Validate and export:
     export summary, trips/stops, legs/edges, runtimes, and metadata
 ```
 
-## 14. Implementation Order
+## 14. Implementation Status and Next Steps
 
-The multi-customer toy now covers data structures, shared schedule evaluation, sequential insertion, multi-trip reuse, charging repair, deterministic VND, and reproducible Basic VNS. The remaining implementation order is:
+The shared engine covers data structures, schedule evaluation, sequential
+insertion, multi-trip reuse, bounded repair, charging repair, deterministic
+VND, and reproducible Basic VNS. The precomputed-matrix adapter has been run
+with Small, Medium, and Large instances.
 
-1. expose explicit path and charging-stop moves when the real-data representation supports alternatives;
-2. connect the existing Berlin road-path layer;
-3. connect Germany data only after Small and Medium instances are reproducible;
-4. compare with a solver that implements the same multi-customer and multi-trip model.
+The remaining steps are:
+
+1. compare heuristic and solver JSON results for identical inputs, objective
+   definitions, scales, and runtime boundaries;
+2. expose explicit path and charging-stop moves if a future data
+   representation provides several alternatives per OD relation;
+3. report risk, cost, time, feasibility, and runtime separately.
 
 ## 15. References Used for the Heuristic
 
