@@ -25,7 +25,7 @@ The adapter expects one coherent instance directory and a vehicle file:
 <data-root>/
     vehicles.csv
     <instance-directory>/
-        *instanz_*Timo.csv
+        *instanz_*.csv
         od_matrix_<name>.csv
         od_matrix_<name>_charger.csv
 ```
@@ -75,7 +75,7 @@ Input selection:
 |---|---:|---|---|
 | `--data-dir` | yes | none | Directory containing one coherent instance and its OD matrices. |
 | `--vehicles-file` | no | `<data-dir>/../vehicles.csv` | Vehicle fleet CSV. |
-| `--instance-file` | no | unique `*instanz_*Timo.csv` | Explicit customer/depot instance CSV. |
+| `--instance-file` | no | unique `*instanz_*.csv` | Explicit customer/depot instance CSV. |
 | `--od-matrix-file` | no | unique non-charger `od_matrix_*.csv` | Regular customer/depot OD matrix. |
 | `--charger-matrix-file` | no | unique charger `od_matrix_*.csv` | Charging-station OD matrix. |
 | `--vehicle-hazard-compatibility-file` | no | none | JSON object mapping each vehicle ID to its allowed hazard classes. |
