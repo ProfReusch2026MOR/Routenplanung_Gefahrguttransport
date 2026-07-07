@@ -1186,6 +1186,7 @@ def _vnd_result_metadata(vnd_run: Optional[VNDRun]) -> Optional[Dict[str, Any]]:
             vnd_run.incomplete_neighborhoods
         ),
         "runtime_seconds": vnd_run.runtime_seconds,
+        "single_trip_per_vehicle": vnd_run.single_trip_per_vehicle,
     }
 
 
@@ -1228,6 +1229,7 @@ def _vns_result_metadata(vns_run: Optional[VNSRun]) -> Optional[Dict[str, Any]]:
         "vnd_runs": vns_run.vnd_runs,
         "vnd_evaluated_candidates": vns_run.vnd_evaluated_candidates,
         "runtime_seconds": vns_run.runtime_seconds,
+        "single_trip_per_vehicle": vns_run.single_trip_per_vehicle,
     }
 
 
@@ -1563,6 +1565,9 @@ def build_result_payload(
                 name: Path(path).name
                 for name, path in adapter_result.source_files.items()
             },
+            "single_trip_per_vehicle_requested": (
+                construction_run.single_trip_per_vehicle
+            ),
             "single_trip_per_vehicle": single_trip_per_vehicle,
             "charging_is_solver_compatible": (
                 charging_is_solver_compatible
@@ -1765,6 +1770,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--single-trip-per-vehicle",
+        action="store_true",
+        help=(
+            "Enforce the current solver-compatible route structure: each "
+            "physical vehicle may receive at most one depot-to-depot trip."
+        ),
+    )
+    parser.add_argument(
         "--repair-evaluations",
         type=int,
         default=20_000,
@@ -1835,17 +1848,20 @@ def main() -> None:
         construction = construct_initial_solution(
             adapter.instance,
             construction_strategy=args.construction_strategy,
+            single_trip_per_vehicle=args.single_trip_per_vehicle,
         )
         repair = repair_partial_solution_depth_one(
             adapter.instance,
             construction,
             max_candidate_evaluations=args.repair_evaluations,
             max_seconds=args.repair_seconds,
+            single_trip_per_vehicle=args.single_trip_per_vehicle,
         )
         vnd = improve_solution_vnd(
             adapter.instance,
             repair,
             max_neighborhood_passes=args.vnd_passes,
+            single_trip_per_vehicle=args.single_trip_per_vehicle,
         )
         vns = improve_solution_vns(
             adapter.instance,
@@ -1853,6 +1869,7 @@ def main() -> None:
             random_seed=args.random_seed,
             max_seconds=args.vns_seconds,
             max_vnd_neighborhood_passes=args.vnd_passes,
+            single_trip_per_vehicle=args.single_trip_per_vehicle,
         )
     except (InputDataError, ValueError) as error:
         raise SystemExit(f"Input error: {error}") from error
@@ -1860,6 +1877,7 @@ def main() -> None:
     print(summarize_adapter(adapter))
     print()
     print(f"construction_strategy={args.construction_strategy}")
+    print(f"single_trip_per_vehicle={args.single_trip_per_vehicle}")
     print()
     print(summarize_run(construction))
     print()

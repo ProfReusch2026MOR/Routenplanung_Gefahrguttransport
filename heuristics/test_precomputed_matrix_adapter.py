@@ -557,6 +557,34 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
             payload["metadata"]["customer_set_complete"]
         )
 
+    def test_single_trip_request_is_exported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            small_dir = self._write_fixture(Path(directory))
+
+            result = build_matrix_adapter(small_dir)
+            run = construct_initial_solution(
+                result.instance,
+                single_trip_per_vehicle=True,
+            )
+            payload = build_result_payload(
+                result,
+                run.evaluation,
+                construction_run=run,
+                search_status=run.status,
+                runtime_seconds={
+                    "construction": run.runtime_seconds,
+                },
+                objective_scales=run.scales,
+            )
+
+        self.assertTrue(
+            payload["metadata"]["single_trip_per_vehicle_requested"]
+        )
+        self.assertTrue(payload["metadata"]["single_trip_per_vehicle"])
+        self.assertTrue(
+            payload["metadata"]["route_structure_compatible"]
+        )
+
     def test_rejects_unknown_excluded_customer(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             small_dir = self._write_fixture(Path(directory))

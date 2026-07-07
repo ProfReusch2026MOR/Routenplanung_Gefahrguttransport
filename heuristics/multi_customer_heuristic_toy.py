@@ -229,6 +229,7 @@ class HeuristicRun:
     scales: ObjectiveScales
     runtime_seconds: float
     construction_strategy: str = "best_insertion"
+    single_trip_per_vehicle: bool = False
 
 
 @dataclass(frozen=True)
@@ -263,6 +264,7 @@ class RepairRun:
     max_primary_candidates_per_ejection: int
     runtime_seconds: float
     construction_strategy: str
+    single_trip_per_vehicle: bool = False
 
 
 @dataclass(frozen=True)
@@ -290,6 +292,7 @@ class DepthTwoRepairRun:
     max_first_reinsertions: int
     runtime_seconds: float
     construction_strategy: str
+    single_trip_per_vehicle: bool = False
 
 
 @dataclass(frozen=True)
@@ -322,6 +325,7 @@ class VNDRun:
     incomplete_neighborhoods: Tuple[str, ...]
     neighborhood_passes: int
     runtime_seconds: float
+    single_trip_per_vehicle: bool = False
 
 
 @dataclass(frozen=True)
@@ -355,6 +359,7 @@ class VNSRun:
     vnd_runs: int
     vnd_evaluated_candidates: int
     runtime_seconds: float
+    single_trip_per_vehicle: bool = False
 
 
 @dataclass(frozen=True)
@@ -2704,13 +2709,36 @@ def _search_limit_reached(reasons: Iterable[str]) -> bool:
     )
 
 
+def _validate_bool_flag(value: bool, label: str) -> None:
+    if not isinstance(value, bool):
+        raise ValueError(f"{label} must be a boolean.")
+
+
+def _resolve_single_trip_flag(
+    explicit_value: Optional[bool],
+    source_run: object,
+) -> bool:
+    if explicit_value is None:
+        return bool(getattr(source_run, "single_trip_per_vehicle", False))
+    _validate_bool_flag(explicit_value, "single_trip_per_vehicle")
+    return explicit_value
+
+
+def _single_trip_schedule_feasible(
+    schedules: Mapping[str, Sequence[Sequence[str]]],
+) -> bool:
+    return all(len(vehicle_trips) <= 1 for vehicle_trips in schedules.values())
+
+
 def construct_initial_solution(
     instance: ToyInstance,
     *,
     construction_strategy: str = "best_insertion",
+    single_trip_per_vehicle: bool = False,
 ) -> HeuristicRun:
     """Construct deterministic vehicle trips by sequential insertion."""
     start = time.perf_counter()
+    _validate_bool_flag(single_trip_per_vehicle, "single_trip_per_vehicle")
     if construction_strategy not in CONSTRUCTION_STRATEGIES:
         allowed = ", ".join(CONSTRUCTION_STRATEGIES)
         raise ValueError(
@@ -2731,6 +2759,7 @@ def construct_initial_solution(
             scales,
             time.perf_counter() - start,
             construction_strategy=construction_strategy,
+            single_trip_per_vehicle=single_trip_per_vehicle,
         )
     except NoFeasibleCustomerError as error:
         scales = ObjectiveScales(1.0, 1.0, 1.0, False)
@@ -2762,6 +2791,7 @@ def construct_initial_solution(
             scales,
             time.perf_counter() - start,
             construction_strategy=construction_strategy,
+            single_trip_per_vehicle=single_trip_per_vehicle,
         )
     schedules: Dict[str, List[List[str]]] = {
         vehicle_id: [] for vehicle_id in instance.vehicles
@@ -2782,6 +2812,8 @@ def construct_initial_solution(
             customer_id: set() for customer_id in unserved
         }
         for vehicle_id in sorted(instance.vehicles):
+            if single_trip_per_vehicle and schedules[vehicle_id]:
+                continue
             for customer_id in sorted(unserved):
                 proposal = _copy_schedules(schedules)
                 proposal[vehicle_id].append([customer_id])
@@ -2858,6 +2890,7 @@ def construct_initial_solution(
                 scales,
                 time.perf_counter() - start,
                 construction_strategy=construction_strategy,
+                single_trip_per_vehicle=single_trip_per_vehicle,
             )
 
         selected_seed = _select_construction_candidate(
@@ -2957,12 +2990,15 @@ def construct_initial_solution(
         scales,
         time.perf_counter() - start,
         construction_strategy=construction_strategy,
+        single_trip_per_vehicle=single_trip_per_vehicle,
     )
 
 
 def _customer_insertion_proposals(
     schedules: Mapping[str, Sequence[Sequence[str]]],
     customer_id: str,
+    *,
+    single_trip_per_vehicle: bool = False,
 ) -> Iterable[
     Tuple[
         str,
@@ -2971,6 +3007,7 @@ def _customer_insertion_proposals(
         Dict[str, List[List[str]]],
     ]
 ]:
+    _validate_bool_flag(single_trip_per_vehicle, "single_trip_per_vehicle")
     for vehicle_id in sorted(schedules):
         for trip_index, trip in enumerate(schedules[vehicle_id]):
             for insertion_position in range(len(trip) + 1):
@@ -2986,6 +3023,8 @@ def _customer_insertion_proposals(
                     proposal,
                 )
 
+        if single_trip_per_vehicle and schedules[vehicle_id]:
+            continue
         proposal = _copy_schedules(schedules)
         proposal[vehicle_id].append([customer_id])
         yield vehicle_id, len(schedules[vehicle_id]), 0, proposal
@@ -2998,8 +3037,13 @@ def repair_partial_solution_depth_one(
     max_candidate_evaluations: int = 20_000,
     max_seconds: float = 300.0,
     max_primary_candidates_per_ejection: int = 3,
+    single_trip_per_vehicle: Optional[bool] = None,
 ) -> RepairRun:
     """Repair a partial construction by one-customer ejection exchanges."""
+    single_trip_per_vehicle = _resolve_single_trip_flag(
+        single_trip_per_vehicle,
+        construction_run,
+    )
     if (
         isinstance(max_candidate_evaluations, bool)
         or not isinstance(max_candidate_evaluations, Integral)
@@ -3051,6 +3095,7 @@ def repair_partial_solution_depth_one(
             ),
             runtime_seconds=time.perf_counter() - start,
             construction_strategy=construction_run.construction_strategy,
+            single_trip_per_vehicle=single_trip_per_vehicle,
         )
     current_evaluation = evaluate_solution(
         instance,
@@ -3075,6 +3120,7 @@ def repair_partial_solution_depth_one(
             ),
             runtime_seconds=time.perf_counter() - start,
             construction_strategy=construction_run.construction_strategy,
+            single_trip_per_vehicle=single_trip_per_vehicle,
         )
 
     evaluated_candidates = 0
@@ -3124,6 +3170,7 @@ def repair_partial_solution_depth_one(
         ) in _customer_insertion_proposals(
             inserted_candidate.schedules,
             ejected_customer,
+            single_trip_per_vehicle=single_trip_per_vehicle,
         ):
             candidate_evaluation = evaluate_candidate(proposal)
             if candidate_evaluation is None:
@@ -3284,6 +3331,7 @@ def repair_partial_solution_depth_one(
                     ) in _customer_insertion_proposals(
                         ejected_schedules,
                         inserted_customer,
+                        single_trip_per_vehicle=single_trip_per_vehicle,
                     ):
                         candidate_evaluation = evaluate_candidate(proposal)
                         if candidate_evaluation is None:
@@ -3390,6 +3438,7 @@ def repair_partial_solution_depth_one(
         ),
         runtime_seconds=time.perf_counter() - start,
         construction_strategy=construction_run.construction_strategy,
+        single_trip_per_vehicle=single_trip_per_vehicle,
     )
 
 
@@ -3401,8 +3450,13 @@ def repair_partial_solution_depth_two(
     max_seconds: float = 300.0,
     max_primary_candidates: int = 100,
     max_first_reinsertions: int = 3,
+    single_trip_per_vehicle: Optional[bool] = None,
 ) -> DepthTwoRepairRun:
     """Repair a partial solution by bounded two-customer replacement."""
+    single_trip_per_vehicle = _resolve_single_trip_flag(
+        single_trip_per_vehicle,
+        initial_run,
+    )
     integer_limits = {
         "max_candidate_evaluations": max_candidate_evaluations,
         "max_primary_candidates": max_primary_candidates,
@@ -3454,6 +3508,7 @@ def repair_partial_solution_depth_two(
             max_first_reinsertions=max_first_reinsertions,
             runtime_seconds=time.perf_counter() - start,
             construction_strategy=initial_run.construction_strategy,
+            single_trip_per_vehicle=single_trip_per_vehicle,
         )
     current_evaluation = evaluate_solution(
         instance,
@@ -3477,6 +3532,7 @@ def repair_partial_solution_depth_two(
             max_first_reinsertions=max_first_reinsertions,
             runtime_seconds=time.perf_counter() - start,
             construction_strategy=initial_run.construction_strategy,
+            single_trip_per_vehicle=single_trip_per_vehicle,
         )
 
     evaluated_candidates = 0
@@ -3524,7 +3580,11 @@ def repair_partial_solution_depth_two(
             trip_index,
             insertion_position,
             proposal,
-        ) in _customer_insertion_proposals(schedules, customer_id):
+        ) in _customer_insertion_proposals(
+            schedules,
+            customer_id,
+            single_trip_per_vehicle=single_trip_per_vehicle,
+        ):
             evaluation = evaluate_candidate(proposal)
             if evaluation is None:
                 break
@@ -3758,6 +3818,7 @@ def repair_partial_solution_depth_two(
         max_first_reinsertions=max_first_reinsertions,
         runtime_seconds=time.perf_counter() - start,
         construction_strategy=initial_run.construction_strategy,
+        single_trip_per_vehicle=single_trip_per_vehicle,
     )
 
 
@@ -3959,21 +4020,31 @@ def _trip_reassignment_candidates(
 def _vnd_neighborhood_candidates(
     neighborhood: str,
     schedules: Mapping[str, Sequence[Sequence[str]]],
+    *,
+    single_trip_per_vehicle: bool = False,
 ) -> Iterable[Tuple[str, Dict[str, List[List[str]]]]]:
+    _validate_bool_flag(single_trip_per_vehicle, "single_trip_per_vehicle")
     if neighborhood == "intra_trip_relocate":
-        yield from _intra_trip_relocate_candidates(schedules)
+        candidates = _intra_trip_relocate_candidates(schedules)
     elif neighborhood == "intra_trip_2opt":
-        yield from _intra_trip_2opt_candidates(schedules)
+        candidates = _intra_trip_2opt_candidates(schedules)
     elif neighborhood == "intra_trip_swap":
-        yield from _intra_trip_swap_candidates(schedules)
+        candidates = _intra_trip_swap_candidates(schedules)
     elif neighborhood == "inter_trip_relocate":
-        yield from _inter_trip_relocate_candidates(schedules)
+        candidates = _inter_trip_relocate_candidates(schedules)
     elif neighborhood == "inter_trip_swap":
-        yield from _inter_trip_swap_candidates(schedules)
+        candidates = _inter_trip_swap_candidates(schedules)
     elif neighborhood == "trip_reassignment":
-        yield from _trip_reassignment_candidates(schedules)
+        candidates = _trip_reassignment_candidates(schedules)
     else:
         raise ValueError(f"Unknown VND neighborhood: {neighborhood}.")
+    for description, proposal in candidates:
+        if (
+            single_trip_per_vehicle
+            and not _single_trip_schedule_feasible(proposal)
+        ):
+            continue
+        yield description, proposal
 
 
 def _vnd_candidate_key(
@@ -3996,8 +4067,13 @@ def improve_solution_vnd(
     *,
     max_neighborhood_passes: int = 1_000,
     deadline: Optional[float] = None,
+    single_trip_per_vehicle: Optional[bool] = None,
 ) -> VNDRun:
     """Improve a complete construction solution with deterministic VND."""
+    single_trip_per_vehicle = _resolve_single_trip_flag(
+        single_trip_per_vehicle,
+        initial_run,
+    )
     if (
         isinstance(max_neighborhood_passes, bool)
         or not isinstance(max_neighborhood_passes, Integral)
@@ -4023,6 +4099,12 @@ def improve_solution_vnd(
         initial_run.status != "feasible"
         or not initial_evaluation.feasible
         or initial_evaluation.unserved_customers
+        or (
+            single_trip_per_vehicle
+            and not _single_trip_schedule_feasible(
+                initial_evaluation.schedules
+            )
+        )
     ):
         return VNDRun(
             status="initial_solution_infeasible",
@@ -4036,6 +4118,7 @@ def improve_solution_vnd(
             incomplete_neighborhoods=tuple(),
             neighborhood_passes=0,
             runtime_seconds=time.perf_counter() - start,
+            single_trip_per_vehicle=single_trip_per_vehicle,
         )
 
     current_evaluation = initial_evaluation
@@ -4065,6 +4148,7 @@ def improve_solution_vnd(
         for description, proposal in _vnd_neighborhood_candidates(
             neighborhood,
             current_evaluation.schedules,
+            single_trip_per_vehicle=single_trip_per_vehicle,
         ):
             if deadline is not None and time.perf_counter() >= deadline:
                 deadline_reached = True
@@ -4146,19 +4230,24 @@ def improve_solution_vnd(
         ),
         neighborhood_passes=neighborhood_passes,
         runtime_seconds=time.perf_counter() - start,
+        single_trip_per_vehicle=single_trip_per_vehicle,
     )
 
 
 def _unique_shake_candidates(
     neighborhood: str,
     schedules: Mapping[str, Sequence[Sequence[str]]],
+    *,
+    single_trip_per_vehicle: bool = False,
 ) -> Tuple[Tuple[str, Dict[str, List[List[str]]]], ...]:
+    _validate_bool_flag(single_trip_per_vehicle, "single_trip_per_vehicle")
     current_key = _schedule_key(schedules)
     seen_schedules = set()
     candidates = []
     for description, proposal in _vnd_neighborhood_candidates(
         neighborhood,
         schedules,
+        single_trip_per_vehicle=single_trip_per_vehicle,
     ):
         proposal_key = _schedule_key(proposal)
         if proposal_key == current_key or proposal_key in seen_schedules:
@@ -4191,8 +4280,13 @@ def improve_solution_vns(
     max_iterations: int = 1_000,
     max_seconds: float = 60.0,
     max_vnd_neighborhood_passes: int = 1_000,
+    single_trip_per_vehicle: Optional[bool] = None,
 ) -> VNSRun:
     """Escape a VND local optimum with reproducible Basic VNS shaking."""
+    single_trip_per_vehicle = _resolve_single_trip_flag(
+        single_trip_per_vehicle,
+        initial_vnd_run,
+    )
     if isinstance(random_seed, bool) or not isinstance(random_seed, Integral):
         raise ValueError("random_seed must be an integer.")
     if (
@@ -4227,6 +4321,12 @@ def improve_solution_vns(
     if (
         not initial_evaluation.feasible
         or initial_evaluation.unserved_customers
+        or (
+            single_trip_per_vehicle
+            and not _single_trip_schedule_feasible(
+                initial_evaluation.schedules
+            )
+        )
     ):
         return VNSRun(
             status="initial_solution_infeasible",
@@ -4247,6 +4347,7 @@ def improve_solution_vns(
             vnd_runs=0,
             vnd_evaluated_candidates=0,
             runtime_seconds=time.perf_counter() - start,
+            single_trip_per_vehicle=single_trip_per_vehicle,
         )
 
     rng = random.Random(seed)
@@ -4293,6 +4394,7 @@ def improve_solution_vns(
         candidates = _unique_shake_candidates(
             neighborhood,
             current_evaluation.schedules,
+            single_trip_per_vehicle=single_trip_per_vehicle,
         )
         if time.perf_counter() >= deadline:
             status = "time_limit_reached"
@@ -4330,12 +4432,14 @@ def improve_solution_vns(
             evaluation=shaken_evaluation,
             scales=initial_vnd_run.scales,
             runtime_seconds=0.0,
+            single_trip_per_vehicle=single_trip_per_vehicle,
         )
         local_run = improve_solution_vnd(
             instance,
             shaken_run,
             max_neighborhood_passes=max_vnd_neighborhood_passes,
             deadline=deadline,
+            single_trip_per_vehicle=single_trip_per_vehicle,
         )
         vnd_runs += 1
         vnd_evaluated_candidates += local_run.evaluated_candidates
@@ -4416,6 +4520,7 @@ def improve_solution_vns(
         vnd_runs=vnd_runs,
         vnd_evaluated_candidates=vnd_evaluated_candidates,
         runtime_seconds=time.perf_counter() - start,
+        single_trip_per_vehicle=single_trip_per_vehicle,
     )
 
 
