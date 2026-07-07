@@ -1,0 +1,165 @@
+{
+  "meta": {
+    "method": "heuristik_nearest_neighbor",
+    "instance": "medium",
+    "timestamp": "2026-07-05T21:00:12",
+    "runtime_seconds": 0.0,
+    "notes": "Beispiel-Output für den Warm-Start des MILP-Solvers. Timo: bitte dieses Schema für die Heuristik übernehmen — Pflichtfelder sind meta.method, meta.runtime_seconds und je Route vehicle + sequence; charging_stops/breaks optional."
+  },
+  "kpis": {
+    "objective_normalized": 0.336636,
+    "total_risk_km_equiv": 795.6,
+    "total_cost_eur": 6567.15,
+    "fixed_cost_eur": 5400,
+    "variable_cost_eur": 1167.15,
+    "charging_cost_eur": 0.0,
+    "total_drive_time_min": 1849.2,
+    "total_work_time_min": 2974.2,
+    "max_work_time_min": 716.6,
+    "total_distance_km": 2053.6,
+    "vehicles_used": 5,
+    "customers_served": 20
+  },
+  "routes": [
+    {
+      "vehicle": "MAN_eTGX_1",
+      "sequence": [
+        "DEPOT",
+        "C2",
+        "C11",
+        "C10",
+        "C18",
+        "C19",
+        "C13",
+        "DEPOT"
+      ],
+      "customers": [
+        "C2",
+        "C11",
+        "C10",
+        "C18",
+        "C19",
+        "C13"
+      ],
+      "load_l": 30500.0,
+      "distance_km": 412.9,
+      "drive_time_min": 401.6,
+      "service_time_min": 270.0,
+      "break_time_min": 45.0,
+      "charge_time_min": 0.0,
+      "work_time_min": 716.6,
+      "charging_stops": [],
+      "breaks": [
+        "C19"
+      ]
+    },
+    {
+      "vehicle": "MAN_eTGX_2",
+      "sequence": [
+        "DEPOT",
+        "C20",
+        "C6",
+        "C8",
+        "C4",
+        "C14",
+        "DEPOT"
+      ],
+      "customers": [
+        "C20",
+        "C6",
+        "C8",
+        "C4",
+        "C14"
+      ],
+      "load_l": 29000.0,
+      "distance_km": 411.4,
+      "drive_time_min": 367.9,
+      "service_time_min": 225.0,
+      "break_time_min": 45.0,
+      "charge_time_min": 0.0,
+      "work_time_min": 637.9,
+      "charging_stops": [],
+      "breaks": [
+        "C14"
+      ]
+    },
+    {
+      "vehicle": "MAN_eTG_3",
+      "sequence": [
+        "DEPOT",
+        "C1",
+        "C3",
+        "C12",
+        "DEPOT"
+      ],
+      "customers": [
+        "C1",
+        "C3",
+        "C12"
+      ],
+      "load_l": 19000.0,
+      "distance_km": 475.9,
+      "drive_time_min": 429.9,
+      "service_time_min": 135.0,
+      "break_time_min": 45.0,
+      "charge_time_min": 0.0,
+      "work_time_min": 609.9,
+      "charging_stops": [],
+      "breaks": [
+        "C12"
+      ]
+    },
+    {
+      "vehicle": "Volvo_FH_Electric_1",
+      "sequence": [
+        "DEPOT",
+        "C16",
+        "C17",
+        "C9",
+        "DEPOT"
+      ],
+      "customers": [
+        "C16",
+        "C17",
+        "C9"
+      ],
+      "load_l": 19000.0,
+      "distance_km": 323.5,
+      "drive_time_min": 288.8,
+      "service_time_min": 135.0,
+      "break_time_min": 45.0,
+      "charge_time_min": 0.0,
+      "work_time_min": 468.8,
+      "charging_stops": [],
+      "breaks": [
+        "C9"
+      ]
+    },
+    {
+      "vehicle": "Volvo_FH_Electric_2",
+      "sequence": [
+        "DEPOT",
+        "C7",
+        "C5",
+        "C15",
+        "DEPOT"
+      ],
+      "customers": [
+        "C7",
+        "C5",
+        "C15"
+      ],
+      "load_l": 16000.0,
+      "distance_km": 429.9,
+      "drive_time_min": 361.0,
+      "service_time_min": 135.0,
+      "break_time_min": 45.0,
+      "charge_time_min": 0.0,
+      "work_time_min": 541.0,
+      "charging_stops": [],
+      "breaks": [
+        "C15"
+      ]
+    }
+  ]
+}
