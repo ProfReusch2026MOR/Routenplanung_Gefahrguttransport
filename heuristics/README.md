@@ -40,19 +40,19 @@ explicitly.
 Run a matrix-backed Small, Medium, or Large baseline:
 
 ```text
-python -m heuristics.precomputed_matrix_adapter --data-dir <instance-directory> --vehicles-file <vehicles.csv> --output-json <result.json>
+python -m heuristics.precomputed_matrix_adapter --data-dir <instance-directory> --vehicles-file <vehicles.csv> --single-trip-per-vehicle --output-json <result.json>
 ```
 
 When the directory contains ambiguous filenames:
 
 ```text
-python -m heuristics.precomputed_matrix_adapter --data-dir <instance-directory> --vehicles-file <vehicles.csv> --instance-file <instance.csv> --od-matrix-file <od-matrix.csv> --charger-matrix-file <charger-matrix.csv> --output-json <result.json>
+python -m heuristics.precomputed_matrix_adapter --data-dir <instance-directory> --vehicles-file <vehicles.csv> --instance-file <instance.csv> --od-matrix-file <od-matrix.csv> --charger-matrix-file <charger-matrix.csv> --single-trip-per-vehicle --output-json <result.json>
 ```
 
 Run the cost-oriented Small scenario:
 
 ```text
-python -m heuristics.precomputed_matrix_adapter --data-dir <instance-directory> --vehicles-file <vehicles.csv> --exclude-customer C10 --risk-weight 0.3 --cost-weight 0.5 --time-weight 0.2 --max-charging-branch-evaluations 1000 --output-json <result.json>
+python -m heuristics.precomputed_matrix_adapter --data-dir <instance-directory> --vehicles-file <vehicles.csv> --exclude-customer C10 --risk-weight 0.3 --cost-weight 0.5 --time-weight 0.2 --single-trip-per-vehicle --max-charging-branch-evaluations 1000 --output-json <result.json>
 ```
 
 `--exclude-customer` may be repeated. Excluding a customer changes the
@@ -106,6 +106,7 @@ Search configuration:
 | Parameter | Default | Meaning |
 |---|---:|---|
 | `--construction-strategy` | `best_insertion` | New-trip seed rule: `best_insertion`, `regret_2`, or `hardest_first`. Trip extension always uses best insertion. |
+| `--single-trip-per-vehicle` | `False` | Enforces the current solver-compatible structure: each physical vehicle may receive at most one depot-to-depot trip. Omit it only for multi-trip extension or sensitivity runs. |
 | `--repair-evaluations` | `20000` | Maximum depth-one repair candidate evaluations. |
 | `--repair-seconds` | `300` | Depth-one repair time limit in seconds. |
 | `--vnd-passes` | `1000` | Maximum deterministic VND neighborhood passes. |
@@ -170,16 +171,25 @@ adapter = build_matrix_adapter(
     weights=ObjectiveWeights(risk=0.5, cost=0.3, time=0.2),
 )
 
-construction = construct_initial_solution(adapter.instance)
+construction = construct_initial_solution(
+    adapter.instance,
+    single_trip_per_vehicle=True,
+)
 depth_one = repair_partial_solution_depth_one(
     adapter.instance,
     construction,
+    single_trip_per_vehicle=True,
 )
 depth_two = repair_partial_solution_depth_two(
     adapter.instance,
     depth_one,
+    single_trip_per_vehicle=True,
 )
 ```
+
+When `single_trip_per_vehicle` is omitted in repair, VND, or VNS, the
+setting is inherited from the incoming run. Passing it explicitly is still
+useful in scripts where the route-structure mode should be obvious.
 
 Only pass a repair result to VND when its status and evaluation are feasible.
 The complete experiment workflow must record all configured limits, runtime
@@ -194,21 +204,24 @@ python -m unittest discover -s heuristics -p "test_*.py"
 
 ## 1. Scope
 
-This document defines the target heuristic for a single-depot hazardous-material vehicle routing problem.
+This document defines the heuristic for a single-depot hazardous-material vehicle routing problem.
 
-The heuristic assigns customers to physical vehicles, orders the customers within depot-to-depot trips, selects road paths that satisfy the implemented ADR/tunnel rules, and schedules several trips by the same vehicle when time permits. The target scenario uses a heterogeneous electric fleet and incompatible hazardous goods such as gasoline and chlorine.
+For the final solver comparison, the heuristic is used in the same single-trip setting as the current MILP solver: each physical vehicle performs at most one depot-to-depot customer route. This keeps the heuristic result directly comparable to the solver and usable as a solver-compatible route proposal.
 
-The first multi-customer version uses these assumptions:
+Beyond this common baseline, the heuristic engine also implements a multi-trip extension. In that extension, a vehicle may return to the depot, reload, and start another depot-to-depot trip within the same planning horizon. This is more flexible than the current solver formulation and is treated as a heuristic extension or sensitivity result, not as the direct solver-comparison case.
+
+The solver-compatible single-trip experiments use these assumptions:
 
 - every order starts at the depot and is delivered to one customer;
 - every customer order is served exactly once and is not split;
 - one trip carries only one compatible hazardous-goods class;
 - every trip starts and ends at the depot;
-- payload capacity is restored only after the vehicle returns and reloads;
-- a vehicle may perform several non-overlapping trips during the planning day;
-- customer service, depot reload, charging, and driver-break times affect the schedule;
+- each physical vehicle performs at most one trip;
+- customer service, charging, and driver-break times affect the schedule;
 - the final depot return is empty and has transport cost and time but no cargo-related HazMat risk;
 - the empty but uncleaned vehicle continues to use the same implemented ADR/tunnel rules as its loaded trip.
+
+In multi-trip runs, depot reload time is active, payload capacity is restored only after the vehicle returns and reloads, and a vehicle may perform several non-overlapping trips during the planning day. Such runs must be clearly labelled as multi-trip and should only be compared with a solver that uses the same route structure.
 
 As a conservative first-version assumption, a physical vehicle cannot change hazardous-goods class during the planning day. A later version may allow a class change after depot cleaning if cleaning time, cost, and legal rules are defined by the team.
 
@@ -232,7 +245,7 @@ The implementation is an adaptation rather than an exact reproduction:
 
 - static candidate paths replace the time-dependent label-setting procedure from Androutsopoulos and Zografos (2012);
 - the baseline may test every feasible insertion position instead of only the front of the unfinished route;
-- VNS neighborhoods are adapted to hazardous-goods compatibility, charging, and multi-trip scheduling;
+- VNS neighborhoods are adapted to hazardous-goods compatibility, charging, single-trip routes, and the optional multi-trip extension;
 - the risk formula uses the population, accident, nature, class, and vehicle data available in this project.
 
 ## 3. Solution Structure
@@ -853,18 +866,18 @@ useful when long-distance customers would otherwise remain until the fleet
 has too little time for them. Trip extension still uses the ordinary minimum
 insertion score.
 
-### 7.4 Closing and Reusing a Vehicle
+### 7.4 Closing a Trip
 
 When no further customer can be inserted:
 
 1. close the trip with a feasible return to the depot;
 2. record its return time;
-3. add depot reload time;
-4. add any required depot charging time;
-5. update `vehicle.available_time`;
-6. start another trip if the shift and daily limits allow it.
+3. add any required depot charging time;
+4. update the vehicle schedule.
 
-Start a new trip with any available compatible physical vehicle, including a vehicle whose previous trip has already finished. If no feasible option exists, report the customer and the exact infeasibility reason.
+In the solver-compatible single-trip mode, a new trip can only use a physical vehicle that has not yet been assigned a route. This enforces one `DEPOT -> customers -> DEPOT` route per used vehicle.
+
+In the multi-trip extension, the heuristic additionally allows a vehicle whose previous trip has already finished to start another trip after depot reload and charging, if the shift and daily limits still allow it. If no feasible option exists, report the customer and the exact infeasibility reason.
 
 For an insertion into an existing trip, `delta_cost` includes the changed trip costs and the resulting change in end-of-day recharge cost. For a new trip, it also includes `TripCost_v`; `ActivationCost_v` is added only when the physical vehicle has not been used earlier in the solution.
 
@@ -1190,7 +1203,21 @@ heuristic_routes = {
 }
 ```
 
-Its key is the solver's unique physical-vehicle name (`solver_name`, falling back to vehicle type). Its list contains only customers and depot nodes. Several trips by one vehicle are flattened with an intermediate `DEPOT`. Charging stations and technical revisits remain in the full selected-stop output and are not discarded from heuristic evaluation. This is an exchange representation; it becomes a warm start only after a solver importer validates and applies it.
+Its key is the solver's unique physical-vehicle name (`solver_name`, falling back to vehicle type). Its list contains only customers and depot nodes. In solver-compatible single-trip outputs, each used vehicle has exactly one route list. In multi-trip extension outputs, several trips by one vehicle are flattened with an intermediate `DEPOT` for exchange and diagnostics only. Charging stations and technical revisits remain in the full selected-stop output and are not discarded from heuristic evaluation. This is an exchange representation; it becomes a warm start only after a solver importer validates and applies it.
+
+For the current single-trip solver, a route proposal is solver-compatible only
+when the exported metadata reports:
+
+```text
+single_trip_per_vehicle = True
+route_structure_compatible = True
+```
+
+In that case every active vehicle has exactly one `DEPOT -> customers -> DEPOT`
+route and no intermediate depot node. A flattened route containing an
+intermediate `DEPOT` represents a multi-trip solution. It is valid for the
+heuristic extension but must not be imported as a warm start for the current
+single-trip solver.
 
 ### Selected Legs or Edges
 
@@ -1214,6 +1241,13 @@ The map is a presentation layer derived from these outputs, not a separate sourc
 
 ## 12. Solver Comparison
 
+The final direct comparison is based on the single-trip route structure used by
+the solver. Therefore, only heuristic outputs with `single_trip_per_vehicle =
+True` and `route_structure_compatible = True` are used for solver comparison or
+warm-start exchange. Multi-trip heuristic outputs remain useful as an extension
+showing more flexible fleet utilization, but they are not direct objective-gap
+benchmarks for the current MILP solver.
+
 Solver and heuristic results are comparable only when they use:
 
 - the same physical vehicles and customer orders;
@@ -1230,7 +1264,8 @@ Compare:
 - total risk;
 - total cost and its components;
 - total distance and time;
-- vehicles and trips used;
+- vehicles and routes used;
+- trips used, with trips equal to active vehicles in the current single-trip comparison;
 - charging decisions;
 - algorithm runtime;
 - end-to-end runtime;
@@ -1245,7 +1280,8 @@ heuristic_gap_percent =
     * 100
 ```
 
-Current independent-OD solver outputs are not a valid quality benchmark for this multi-customer heuristic.
+Results generated with a different route structure, for example multi-trip
+heuristic runs against a single-trip solver, are not valid quality benchmarks.
 
 ## 13. Pseudocode
 
@@ -1256,6 +1292,8 @@ Input:
     depot, charging stations, road graph
     risk, permission, cost, time, and energy data
     objective weights
+    route-structure mode: single-trip for solver comparison,
+        optional multi-trip extension for sensitivity runs
 
 Validate input:
     verify required fields, units, source semantics, and physical fleet
@@ -1281,7 +1319,9 @@ Construct:
     while unserved_customers is not empty:
         seed_candidates = []
 
-        for each vehicle that can start another trip:
+        for each vehicle that can start a trip:
+            if single-trip mode and the vehicle already has a trip:
+                skip this vehicle
             for each compatible unserved customer:
                 create a temporary depot-to-customer-to-depot trip
                 simulate load, battery, time, breaks, and depot return
@@ -1317,6 +1357,9 @@ Construct:
         finalize current_trip
         append it to the selected vehicle
         update vehicle availability and daily resource use
+        in single-trip mode, mark the vehicle unavailable for further trips
+        in multi-trip extension mode, allow another trip only if depot
+            reload, charging, shift, and daily limits remain feasible
 
 Improve with VND:
     current_solution = constructed solution
@@ -1364,14 +1407,20 @@ Validate and export:
 ## 14. Implementation Status and Next Steps
 
 The shared engine covers data structures, schedule evaluation, sequential
-insertion, multi-trip reuse, bounded repair, charging repair, deterministic
-VND, and reproducible Basic VNS. The precomputed-matrix adapter has been run
-with Small, Medium, and Large instances.
+insertion, bounded repair, charging repair, deterministic VND, reproducible
+Basic VNS, and multi-trip reuse as an extension. The reported
+solver-compatible experiments should use single-trip outputs. Small and Medium
+already have single-trip results, and Large has a single-trip feasible
+construction result with an expanded 10-vehicle fleet. The earlier 9-vehicle
+Large result remains a multi-trip heuristic extension result. The CLI and
+Python API expose this choice through `--single-trip-per-vehicle` /
+`single_trip_per_vehicle=True`.
 
 The remaining steps are:
 
 1. compare heuristic and solver JSON results for identical inputs, objective
-   definitions, scales, and runtime boundaries;
+   definitions, scales, runtime boundaries, and the single-trip route
+   structure;
 2. expose explicit path and charging-stop moves if a future data
    representation provides several alternatives per OD relation;
 3. report risk, cost, time, feasibility, and runtime separately.

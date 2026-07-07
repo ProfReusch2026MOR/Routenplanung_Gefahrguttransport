@@ -112,6 +112,58 @@ class MultiCustomerHeuristicToyTests(unittest.TestCase):
                     vehicle.min_reserve_kwh,
                 )
 
+    def test_single_trip_construction_disables_vehicle_reuse(self) -> None:
+        multi_trip_run = construct_initial_solution(self.instance)
+        single_trip_run = construct_initial_solution(
+            self.instance,
+            single_trip_per_vehicle=True,
+        )
+
+        self.assertTrue(
+            any(
+                len(vehicle_evaluation.trips) > 1
+                for vehicle_evaluation
+                in multi_trip_run.evaluation.vehicle_evaluations.values()
+            )
+        )
+        self.assertEqual(single_trip_run.status, "feasible")
+        self.assertTrue(single_trip_run.single_trip_per_vehicle)
+        self.assertTrue(single_trip_run.evaluation.feasible)
+        self.assertTrue(
+            all(
+                len(vehicle_evaluation.trips) <= 1
+                for vehicle_evaluation
+                in single_trip_run.evaluation.vehicle_evaluations.values()
+            )
+        )
+
+    def test_single_trip_vnd_preserves_single_trip_structure(self) -> None:
+        construction = construct_initial_solution(
+            self.instance,
+            single_trip_per_vehicle=True,
+        )
+        repair = repair_partial_solution_depth_one(self.instance, construction)
+
+        vnd = improve_solution_vnd(self.instance, repair)
+
+        self.assertTrue(repair.single_trip_per_vehicle)
+        self.assertTrue(vnd.single_trip_per_vehicle)
+        self.assertNotEqual(vnd.status, "initial_solution_infeasible")
+        self.assertTrue(vnd.evaluation.feasible)
+        self.assertTrue(
+            all(
+                len(vehicle_trips) <= 1
+                for vehicle_trips in vnd.evaluation.schedules.values()
+            )
+        )
+
+    def test_single_trip_flag_must_be_boolean(self) -> None:
+        with self.assertRaises(ValueError):
+            construct_initial_solution(
+                self.instance,
+                single_trip_per_vehicle="yes",
+            )
+
     def test_rejects_mixed_hazard_classes_in_one_trip(self) -> None:
         vehicle = self.instance.vehicles["TRUCK_G_1"]
 
@@ -1861,6 +1913,7 @@ class MultiCustomerHeuristicToyTests(unittest.TestCase):
             *,
             max_neighborhood_passes,
             deadline,
+            single_trip_per_vehicle=False,
         ):
             return replace(
                 vnd_run,
