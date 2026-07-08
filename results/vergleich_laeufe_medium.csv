@@ -1,2 +1,0 @@
-﻿datum,methode,laufzeit_s,status,gap_cbc,zielwert_normiert,risiko_km_aequiv,kosten_eur,fahrzeit_min,arbeitszeit_min,distanz_km,fahrzeuge,warmstart
-2026-07-05_21-08,milp_cbc_warmstart,54.7,Optimal,0.48,0.336635,795.6,6567.15,1849.2,2974.2,2053.6,5,2026-07-05_heuristik_nearest_neighbor_medium.json

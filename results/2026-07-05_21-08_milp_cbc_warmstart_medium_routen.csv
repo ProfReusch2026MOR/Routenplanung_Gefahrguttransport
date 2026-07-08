@@ -1,6 +1,0 @@
-﻿datum,methode,fahrzeug,kunden_anzahl,kunden,menge_l,distanz_km,fahrzeit_min,servicezeit_min,pausen_min,ladezeit_min,arbeitszeit_min,ladestopps,route
-2026-07-05_21-08,milp_cbc_warmstart,MAN_eTGX_1,6,C2 C11 C10 C18 C19 C13,30500.0,412.9,401.6,270.0,45.0,0.0,716.6,,DEPOT -> C2 -> C11 -> C10 -> C18 -> C19 -> C13 -> DEPOT
-2026-07-05_21-08,milp_cbc_warmstart,MAN_eTGX_2,5,C20 C6 C8 C4 C14,29000.0,411.4,367.9,225.0,45.0,0.0,637.9,,DEPOT -> C20 -> C6 -> C8 -> C4 -> C14 -> DEPOT
-2026-07-05_21-08,milp_cbc_warmstart,MAN_eTG_3,3,C1 C3 C12,19000.0,475.9,429.9,135.0,45.0,0.0,609.9,,DEPOT -> C1 -> C3 -> C12 -> DEPOT
-2026-07-05_21-08,milp_cbc_warmstart,Volvo_FH_Electric_1,3,C16 C17 C9,19000.0,323.5,288.8,135.0,45.0,0.0,468.8,,DEPOT -> C16 -> C17 -> C9 -> DEPOT
-2026-07-05_21-08,milp_cbc_warmstart,Volvo_FH_Electric_2,3,C7 C5 C15,16000.0,429.9,361.0,135.0,45.0,0.0,541.0,,DEPOT -> C7 -> C5 -> C15 -> DEPOT
