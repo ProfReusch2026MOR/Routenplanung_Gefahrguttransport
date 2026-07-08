@@ -60,3 +60,6 @@ Thumbs.db
 *.xlsx
 *.gpkg
 *.json
+*.mps
+*.sol
+*.mst
