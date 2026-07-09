@@ -1,0 +1,356 @@
+{
+  "schema_version": "1.0",
+  "status": "feasible",
+  "search_status": "optimal",
+  "routes": {
+    "MAN_eTGX_1": [
+      "DEPOT",
+      "C2",
+      "C1",
+      "C11",
+      "C10",
+      "C18",
+      "DEPOT"
+    ],
+    "MAN_eTGX_2": [
+      "DEPOT",
+      "C20",
+      "C8",
+      "C6",
+      "C7",
+      "C5",
+      "DEPOT"
+    ],
+    "MAN_eTGX_3": [
+      "DEPOT",
+      "C16",
+      "C17",
+      "C9",
+      "DEPOT"
+    ],
+    "MAN_eTGX_4": [],
+    "Volvo_FH_Electric_1": [
+      "DEPOT",
+      "C19",
+      "C3",
+      "C4",
+      "DEPOT"
+    ],
+    "Volvo_FH_Electric_2": [
+      "DEPOT",
+      "C13",
+      "C14",
+      "C15",
+      "DEPOT"
+    ],
+    "Volvo_FH_Electric_3": [],
+    "Mercedes_eActros_600_1": [
+      "DEPOT",
+      "C12",
+      "DEPOT"
+    ],
+    "Mercedes_eActros_600_2": []
+  },
+  "trips": {
+    "MAN_eTGX_1": [
+      [
+        "DEPOT",
+        "C2",
+        "C1",
+        "C11",
+        "C10",
+        "C18",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_2": [
+      [
+        "DEPOT",
+        "C20",
+        "C8",
+        "C6",
+        "C7",
+        "C5",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_3": [
+      [
+        "DEPOT",
+        "C16",
+        "C17",
+        "C9",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_4": [],
+    "Volvo_FH_Electric_1": [
+      [
+        "DEPOT",
+        "C19",
+        "C3",
+        "C4",
+        "DEPOT"
+      ]
+    ],
+    "Volvo_FH_Electric_2": [
+      [
+        "DEPOT",
+        "C13",
+        "C14",
+        "C15",
+        "DEPOT"
+      ]
+    ],
+    "Volvo_FH_Electric_3": [],
+    "Mercedes_eActros_600_1": [
+      [
+        "DEPOT",
+        "C12",
+        "DEPOT"
+      ]
+    ],
+    "Mercedes_eActros_600_2": []
+  },
+  "charging_side_trips": {
+    "MAN_eTGX_1": [],
+    "MAN_eTGX_2": [
+      "L232"
+    ],
+    "MAN_eTGX_3": [
+      "L38"
+    ],
+    "MAN_eTGX_4": [],
+    "Volvo_FH_Electric_1": [
+      "L7"
+    ],
+    "Volvo_FH_Electric_2": [
+      "L228"
+    ],
+    "Volvo_FH_Electric_3": [],
+    "Mercedes_eActros_600_1": [
+      "L146"
+    ],
+    "Mercedes_eActros_600_2": []
+  },
+  "technical_routes": {
+    "MAN_eTGX_1": [
+      [
+        "DEPOT",
+        "C2",
+        "C1",
+        "C11",
+        "C10",
+        "C18",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_2": [
+      [
+        "DEPOT",
+        "C20",
+        "C8",
+        "C6",
+        "C7",
+        "C5",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_3": [
+      [
+        "DEPOT",
+        "C16",
+        "C17",
+        "C9",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_4": [],
+    "Volvo_FH_Electric_1": [
+      [
+        "DEPOT",
+        "C19",
+        "C3",
+        "C4",
+        "DEPOT"
+      ]
+    ],
+    "Volvo_FH_Electric_2": [
+      [
+        "DEPOT",
+        "C13",
+        "C14",
+        "C15",
+        "DEPOT"
+      ]
+    ],
+    "Volvo_FH_Electric_3": [],
+    "Mercedes_eActros_600_1": [
+      [
+        "DEPOT",
+        "C12",
+        "DEPOT"
+      ]
+    ],
+    "Mercedes_eActros_600_2": []
+  },
+  "metadata": {
+    "dataset_name": "Solver_Instance",
+    "construction_strategy": "mip_solver",
+    "included_customers": [
+      "C1",
+      "C2",
+      "C3",
+      "C4",
+      "C5",
+      "C6",
+      "C7",
+      "C8",
+      "C9",
+      "C10",
+      "C11",
+      "C12",
+      "C13",
+      "C14",
+      "C15",
+      "C16",
+      "C17",
+      "C18",
+      "C19",
+      "C20"
+    ],
+    "excluded_customers": [],
+    "served_customers": [
+      "C6",
+      "C17",
+      "C2",
+      "C4",
+      "C9",
+      "C15",
+      "C7",
+      "C16",
+      "C19",
+      "C13",
+      "C11",
+      "C5",
+      "C1",
+      "C18",
+      "C12",
+      "C8",
+      "C3",
+      "C14",
+      "C20",
+      "C10"
+    ],
+    "unserved_customers": [],
+    "customer_names": {
+      "DEPOT": "Start_Depot_Leuna",
+      "C1": "Industriegebiet_Leipzig",
+      "C2": "Industriegebiet_Halle",
+      "C3": "Industriegebiet_Dresden",
+      "C4": "Tankstelle_Chemnitz",
+      "C5": "Industriegebiet_Erfurt",
+      "C6": "Industriegebiet_Jena",
+      "C7": "DHL_Nhora",
+      "C8": "Tankstelle_Gera",
+      "C9": "Industriegebiet_Magdeburg",
+      "C10": "DB_Werkstatt_Dessau",
+      "C11": "Chemiepark_Bitterfeld",
+      "C12": "Industriegebiet_Cottbus",
+      "C13": "Logistik_Zwickau",
+      "C14": "Aral_Plauen",
+      "C15": "Tankstelle_Hof",
+      "C16": "Industriegebiet_Nordhausen",
+      "C17": "Gewerbegebiet_Halberstadt",
+      "C18": "Industriepark_Wittenberg",
+      "C19": "Tankstelle_Torgau",
+      "C20": "Tankstelle_Naumburg"
+    },
+    "vehicle_ids": [
+      "MAN_eTGX_1",
+      "MAN_eTGX_2",
+      "MAN_eTGX_3",
+      "MAN_eTGX_4",
+      "Volvo_FH_Electric_1",
+      "Volvo_FH_Electric_2",
+      "Volvo_FH_Electric_3",
+      "Mercedes_eActros_600_1",
+      "Mercedes_eActros_600_2"
+    ],
+    "vehicle_hazard_compatibility": {
+      "MAN_eTGX_1": [
+        "3"
+      ],
+      "MAN_eTGX_2": [
+        "3"
+      ],
+      "MAN_eTGX_3": [
+        "3"
+      ],
+      "MAN_eTGX_4": [
+        "3"
+      ],
+      "Volvo_FH_Electric_1": [
+        "3"
+      ],
+      "Volvo_FH_Electric_2": [
+        "3"
+      ],
+      "Volvo_FH_Electric_3": [
+        "3"
+      ],
+      "Mercedes_eActros_600_1": [
+        "3"
+      ],
+      "Mercedes_eActros_600_2": [
+        "3"
+      ]
+    },
+    "vehicle_hazard_compatibility_source": "mip_solver_assumption",
+    "risk_source": "solver_eval_cost_preprocessing",
+    "single_trip_per_vehicle": true,
+    "warnings": [
+      "This JSON was generated dynamically from the PuLP MIP Solver."
+    ]
+  },
+  "objective": {
+    "value": 0.2184721549635823,
+    "weights": {
+      "risk": 0.5,
+      "cost": 0.3,
+      "time": 0.2
+    },
+    "scales": {
+      "risk": 1.0,
+      "cost": 22478.93423,
+      "time": 7020.0,
+      "risk_active": true
+    }
+  },
+  "metrics": {
+    "total_risk": 0.010499999999999999,
+    "total_cost": 9563.283520000003,
+    "total_activation_cost": 6900.0,
+    "total_trip_cost": 0.0,
+    "total_road_operating_cost": 1153.2019950000001,
+    "total_station_charging_cost": 1510.081525,
+    "total_end_of_day_recharge_cost": 0.0,
+    "total_distance_km": 1975.1097999999995,
+    "total_travel_minutes": 1879.2866999999997,
+    "total_service_minutes": 900.0,
+    "total_waiting_minutes": 0.0,
+    "total_charging_minutes": 225.0,
+    "total_break_minutes": 0.0,
+    "total_time_minutes": 3004.2867,
+    "makespan_minute": 780.0
+  },
+  "runtime_seconds": {
+    "data_loading": 1.3292708999942988,
+    "data_preprocessing": 0.24450509995222092,
+    "model_building": 2.1291626000311226,
+    "model_solving": 3589.8404152999865,
+    "result_processing": 0.08888940000906587,
+    "total": 3593.632243299973
+  },
+  "infeasibility_reasons": []
+}

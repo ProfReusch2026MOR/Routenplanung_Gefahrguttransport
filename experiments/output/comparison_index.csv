@@ -1,3 +1,0 @@
-scenario,solver_run_id,solver_dir,heuristic_dir,output_dir,feasible_deliveries_solver,feasible_deliveries_heuristic,total_risk_solver,total_risk_heuristic,total_cost_solver,total_cost_heuristic,core_runtime_solver,core_runtime_heuristic
-w1=0.65,20260624_155347,experiments\data\solver_output\w1=0.65,experiments\data\heuristic_output\w1=0.65,experiments\output\solver_heuristic_comparison_w1=0.65,3.0,3.0,54.568,47.947,558.0319,561.0702,245.426,14.1331
-w1=0.999,20260624_173211,experiments\data\solver_output\w1=0.999,experiments\data\heuristic_output\w1=0.999,experiments\output\solver_heuristic_comparison_w1=0.999,3.0,3.0,54.6334,47.947,658.7871,561.0702,245.306,14.8834

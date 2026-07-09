@@ -1,4 +1,0 @@
-delivery_id,present_in_solver,present_in_heuristic,solver_feasible,heuristic_feasible,heuristic_selected,comparison_status,solver_vehicle,heuristic_vehicle,solver_length_km,heuristic_length_km,length_diff_km,solver_risk,heuristic_risk,risk_diff,solver_variable_cost_eur,heuristic_variable_cost_eur,solver_fixed_cost_eur,heuristic_fixed_cost_eur,solver_total_cost_eur,heuristic_total_cost_eur,total_cost_diff_eur,solver_edge_count,heuristic_edge_count
-delivery_1,True,True,True,True,True,both_feasible,MAN_eTGX,MAN_eTGX,3.5993,3.1712,-0.4281,13.1572,12.7252,-0.432,3.189,2.8097,180.0,180.0,183.189,182.8097,-0.3793,151,204
-delivery_2,True,True,True,True,True,both_feasible,MAN_eTGX,MAN_eTGX,7.8294,11.9249,4.0955,22.4053,19.2878,-3.1175,6.9369,10.5654,180.0,180.0,186.9369,190.5654,3.6285,118,659
-delivery_3,True,True,True,True,True,both_feasible,MAN_eTGX,MAN_eTGX,8.9233,8.6853,-0.238,19.0054,15.934,-3.0714,7.9061,7.6951,180.0,180.0,187.9061,187.6951,-0.211,300,471
