@@ -63,3 +63,4 @@ Thumbs.db
 !small_output/*.json
 !medium_output/*.json
 !medium_output/*.txt
+!heuristic_data/*.json
