@@ -1,0 +1,309 @@
+{
+  "schema_version": "1.0",
+  "status": "feasible",
+  "search_status": "optimal",
+  "routes": {
+    "MAN_eTGX_1": [
+      "DEPOT",
+      "C2",
+      "C7",
+      "C1",
+      "C8",
+      "DEPOT"
+    ],
+    "MAN_eTGX_2": [
+      "DEPOT",
+      "C9",
+      "C4",
+      "C3",
+      "C10",
+      "C6",
+      "C5",
+      "DEPOT"
+    ],
+    "MAN_eTGX_3": [],
+    "MAN_eTGX_4": [],
+    "Volvo_FH_Electric_1": [],
+    "Volvo_FH_Electric_2": [],
+    "Volvo_FH_Electric_3": [],
+    "Mercedes_eActros_600_1": [],
+    "Mercedes_eActros_600_2": []
+  },
+  "trips": {
+    "MAN_eTGX_1": [
+      [
+        "DEPOT",
+        "C2",
+        "C7",
+        "C1",
+        "C8",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_2": [
+      [
+        "DEPOT",
+        "C9",
+        "C4",
+        "C3",
+        "C10",
+        "C6",
+        "C5",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_3": [],
+    "MAN_eTGX_4": [],
+    "Volvo_FH_Electric_1": [],
+    "Volvo_FH_Electric_2": [],
+    "Volvo_FH_Electric_3": [],
+    "Mercedes_eActros_600_1": [],
+    "Mercedes_eActros_600_2": []
+  },
+  "charging_side_trips": {
+    "MAN_eTGX_1": [],
+    "MAN_eTGX_2": [],
+    "MAN_eTGX_3": [],
+    "MAN_eTGX_4": [],
+    "Volvo_FH_Electric_1": [],
+    "Volvo_FH_Electric_2": [],
+    "Volvo_FH_Electric_3": [],
+    "Mercedes_eActros_600_1": [],
+    "Mercedes_eActros_600_2": []
+  },
+  "technical_routes": {
+    "MAN_eTGX_1": [
+      [
+        "DEPOT",
+        "C2",
+        "C7",
+        "C1",
+        "C8",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_2": [
+      [
+        "DEPOT",
+        "C9",
+        "C4",
+        "C3",
+        "C10",
+        "C6",
+        "C5",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_3": [],
+    "MAN_eTGX_4": [],
+    "Volvo_FH_Electric_1": [],
+    "Volvo_FH_Electric_2": [],
+    "Volvo_FH_Electric_3": [],
+    "Mercedes_eActros_600_1": [],
+    "Mercedes_eActros_600_2": []
+  },
+  "street_profiles": [
+    {
+      "from": "DEPOT",
+      "to": "C2",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "fastest"
+    },
+    {
+      "from": "C1",
+      "to": "C8",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "fastest"
+    },
+    {
+      "from": "C2",
+      "to": "C7",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "shortest"
+    },
+    {
+      "from": "C7",
+      "to": "C1",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "shortest"
+    },
+    {
+      "from": "C8",
+      "to": "DEPOT",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "fastest"
+    },
+    {
+      "from": "DEPOT",
+      "to": "C9",
+      "vehicle": "MAN_eTGX_2",
+      "profile": "fastest"
+    },
+    {
+      "from": "C3",
+      "to": "C10",
+      "vehicle": "MAN_eTGX_2",
+      "profile": "shortest"
+    },
+    {
+      "from": "C4",
+      "to": "C3",
+      "vehicle": "MAN_eTGX_2",
+      "profile": "shortest"
+    },
+    {
+      "from": "C6",
+      "to": "C5",
+      "vehicle": "MAN_eTGX_2",
+      "profile": "shortest"
+    },
+    {
+      "from": "C9",
+      "to": "C4",
+      "vehicle": "MAN_eTGX_2",
+      "profile": "shortest"
+    },
+    {
+      "from": "C10",
+      "to": "C6",
+      "vehicle": "MAN_eTGX_2",
+      "profile": "shortest"
+    },
+    {
+      "from": "C5",
+      "to": "DEPOT",
+      "vehicle": "MAN_eTGX_2",
+      "profile": "fastest"
+    }
+  ],
+  "metadata": {
+    "dataset_name": "Solver_Instance",
+    "construction_strategy": "mip_solver",
+    "included_customers": [
+      "C1",
+      "C2",
+      "C3",
+      "C4",
+      "C5",
+      "C6",
+      "C7",
+      "C8",
+      "C9",
+      "C10"
+    ],
+    "excluded_customers": [],
+    "served_customers": [
+      "C1",
+      "C3",
+      "C6",
+      "C10",
+      "C2",
+      "C9",
+      "C5",
+      "C4",
+      "C8",
+      "C7"
+    ],
+    "unserved_customers": [],
+    "customer_names": {
+      "DEPOT": "Start_Depot_Leuna",
+      "C1": "Post_Leipzig",
+      "C2": "Logistik_Halle_Peissen",
+      "C3": "Autopark_Naumburg",
+      "C4": "Wertstoffhof_Gewerbegebiet_Weissenfels",
+      "C5": "Autohof_Jena_Lobeda",
+      "C6": "Tankstelle_Gera_Nord",
+      "C7": "Logistik_Dessau",
+      "C8": "Industriegebiet_Altenburg",
+      "C9": "Tankstelle_Eisleben",
+      "C10": "Shell_Industriegebiet_Zeitz"
+    },
+    "vehicle_ids": [
+      "MAN_eTGX_1",
+      "MAN_eTGX_2",
+      "MAN_eTGX_3",
+      "MAN_eTGX_4",
+      "Volvo_FH_Electric_1",
+      "Volvo_FH_Electric_2",
+      "Volvo_FH_Electric_3",
+      "Mercedes_eActros_600_1",
+      "Mercedes_eActros_600_2"
+    ],
+    "vehicle_hazard_compatibility": {
+      "MAN_eTGX_1": [
+        "3"
+      ],
+      "MAN_eTGX_2": [
+        "3"
+      ],
+      "MAN_eTGX_3": [
+        "3"
+      ],
+      "MAN_eTGX_4": [
+        "3"
+      ],
+      "Volvo_FH_Electric_1": [
+        "3"
+      ],
+      "Volvo_FH_Electric_2": [
+        "3"
+      ],
+      "Volvo_FH_Electric_3": [
+        "3"
+      ],
+      "Mercedes_eActros_600_1": [
+        "3"
+      ],
+      "Mercedes_eActros_600_2": [
+        "3"
+      ]
+    },
+    "vehicle_hazard_compatibility_source": "mip_solver_assumption",
+    "risk_source": "solver_eval_cost_preprocessing",
+    "single_trip_per_vehicle": true,
+    "warnings": [
+      "This JSON was generated dynamically from the PuLP MIP Solver."
+    ]
+  },
+  "objective": {
+    "value": 0.16794365811719367,
+    "weights": {
+      "risk": 0.3,
+      "cost": 0.5,
+      "time": 0.2
+    },
+    "scales": {
+      "risk": 16.0227,
+      "cost": 15753.16322,
+      "time": 7020.0,
+      "risk_active": true
+    }
+  },
+  "metrics": {
+    "total_risk": 3.2205,
+    "total_cost": 2347.4623349999997,
+    "total_activation_cost": 2000.0,
+    "total_trip_cost": 0.0,
+    "total_road_operating_cost": 347.462335,
+    "total_station_charging_cost": 0.0,
+    "total_end_of_day_recharge_cost": 0.0,
+    "total_distance_km": 631.7497,
+    "total_travel_minutes": 623.1151,
+    "total_service_minutes": 450.0,
+    "total_waiting_minutes": 0.0,
+    "total_charging_minutes": 0.0,
+    "total_break_minutes": 90.0,
+    "total_time_minutes": 1163.1151000000002,
+    "makespan_minute": 780.0,
+    "total_charging_events": 0
+  },
+  "runtime_seconds": {
+    "data_loading": 0.2313413000665605,
+    "data_preprocessing": 0.08620749996043742,
+    "model_building": 0.6026416000677273,
+    "model_solving": 253.23126859997865,
+    "result_processing": 0.019615400000475347,
+    "total": 254.17107440007385
+  },
+  "infeasibility_reasons": []
+}

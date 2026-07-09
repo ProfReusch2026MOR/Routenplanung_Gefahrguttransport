@@ -59,7 +59,7 @@ Thumbs.db
 *.pdf
 *.xlsx
 *.gpkg
-*.json
-*.mps
-*.sol
-*.mst
+
+!small_output/*.json
+!medium_output/*.json
+!medium_output/*.txt
