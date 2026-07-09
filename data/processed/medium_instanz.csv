@@ -1,0 +1,22 @@
+id,lat,lon,destination_name,un_number,substance_name,danger_class,quantity,unit
+DEPOT,51.325918,12.011645,Start_Depot_Leuna,-,-,-,-,-
+C1,51.367289, 12.434819,Industriegebiet_Leipzig,UN 1202,Dieselkraftstoff,3,6000,Liter
+C2,51.483631, 12.015296,Industriegebiet_Halle,UN 1202,Dieselkraftstoff,3,8000,Liter
+C3,51.084678, 13.768165,Industriegebiet_Dresden,UN 1202,Dieselkraftstoff,3,7500,Liter
+C4,50.798920, 12.929745,Tankstelle_Chemnitz,UN 1202,Dieselkraftstoff,3,5000,Liter
+C5,50.9792,11.1256,Industriegebiet_Erfurt,UN 1202,Dieselkraftstoff,3,4500,Liter
+C6,50.945592, 11.608864,Industriegebiet_Jena,UN 1202,Dieselkraftstoff,3,7000,Liter
+C7,50.961200, 11.259260,DHL_Nhora,UN 1202,Dieselkraftstoff,3,6500,Liter
+C8,50.912492, 12.061403,Tankstelle_Gera,UN 1202,Dieselkraftstoff,3,5500,Liter
+C9,52.101822, 11.630092,Industriegebiet_Magdeburg,UN 1202,Dieselkraftstoff,3,8500,Liter
+C10,51.802704, 12.235987,DB_Werkstatt_Dessau,UN 1202,Dieselkraftstoff,3,6000,Liter
+C11,51.629473, 12.301097,Chemiepark_Bitterfeld,UN 1202,Dieselkraftstoff,3,4000,Liter
+C12,51.769678, 14.364260,Industriegebiet_Cottbus,UN 1202,Dieselkraftstoff,3,5500,Liter
+C13,50.709001, 12.481034,Logistik_Zwickau,UN 1202,Dieselkraftstoff,3,3500,Liter
+C14,50.499501, 12.147448,Aral_Plauen,UN 1202,Dieselkraftstoff,3,4500,Liter
+C15,50.304638, 11.919935,Tankstelle_Hof,UN 1202,Dieselkraftstoff,3,5000,Liter
+C16,51.486191, 10.791956,Industriegebiet_Nordhausen,UN 1202,Dieselkraftstoff,3,6000,Liter
+C17,51.884395, 11.078309,Gewerbegebiet_Halberstadt,UN 1202,Dieselkraftstoff,3,4500,Liter
+C18,51.876171, 12.591305,Industriepark_Wittenberg,UN 1202,Dieselkraftstoff,3,3500,Liter
+C19,51.552248, 12.970863,Tankstelle_Torgau,UN 1202,Dieselkraftstoff,3,5500,Liter
+C20,51.146041, 11.832647,Tankstelle_Naumburg,UN 1202,Dieselkraftstoff,3,7000,Liter
