@@ -52,8 +52,14 @@ python -m heuristics.precomputed_matrix_adapter --data-dir <instance-directory> 
 Run the cost-oriented Small scenario:
 
 ```text
-python -m heuristics.precomputed_matrix_adapter --data-dir <instance-directory> --vehicles-file <vehicles.csv> --exclude-customer C10 --risk-weight 0.3 --cost-weight 0.5 --time-weight 0.2 --single-trip-per-vehicle --max-charging-branch-evaluations 1000 --output-json <result.json>
+python -m heuristics.precomputed_matrix_adapter --data-dir <instance-directory> --vehicles-file <vehicles.csv> --risk-weight 0.3 --cost-weight 0.5 --time-weight 0.2 --single-trip-per-vehicle --max-charging-branch-evaluations 1000 --output-json <result.json>
 ```
+
+If a customer is only reachable via tunnel-restricted paths whose safest
+loaded cost is `inf`, the adapter replaces the missing risk rate with a
+penalty value (`2.0 × max finite risk rate`) so the leg is kept. This
+matches the solver RISK_PENALTY workaround for the same ADR data gap.
+Relations that received the penalty are listed in `penalty_risk_relations`.
 
 `--exclude-customer` may be repeated. Excluding a customer changes the
 instance and must be documented; solver comparison is valid only when both
