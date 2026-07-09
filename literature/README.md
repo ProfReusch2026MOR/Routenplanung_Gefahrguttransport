@@ -168,6 +168,22 @@ OSMnx provides a reproducible way to obtain and process routable street networks
 
 Haklay and Weber describe OpenStreetMap as a collaborative geographic data source. The paper supports the choice of OSM road data, while also reminding us that user-generated attributes need validation before they are interpreted as complete legal or safety information.
 
+### OpenStreetMap / Geofabrik
+
+**Reference:** OpenStreetMap contributors. OpenStreetMap data for Germany, distributed through Geofabrik. https://download.geofabrik.de/europe/germany.html
+
+**Type:** Open geographic data source.
+
+OpenStreetMap provides the raw road-network data used to build the project graph. Geofabrik is relevant as a practical distribution channel for country-level OSM extracts. This source supports the data basis of the network, while Boeing (2017) and Haklay and Weber (2008) provide the methodological and academic background for working with OSM data.
+
+### Jones and Purves (2008)
+
+**Reference:** Jones, C. B., and Purves, R. S. (2008). Geographical information retrieval. International Journal of Geographical Information Science, 22(3), 219-228.
+
+**Type:** Academic source.
+
+Jones and Purves discuss geographical information retrieval and spatial search concepts. In the project, this source is relevant for the preprocessing idea of limiting and querying geographic data around the relevant depot, customer, and network area. It supports the general spatial-data handling logic, not a specific optimization algorithm.
+
 ### Kim and Jeong (2009)
 
 **Reference:** Kim, B.-I., and Jeong, S. (2009). A comparison of algorithms for origin-destination matrix generation on real road networks and an approximation approach. Computers & Industrial Engineering, 56(1), 70-76.
@@ -186,15 +202,47 @@ Maria et al. compare common geographic distance calculations. The source provide
 
 ADR is a regulatory source rather than an academic paper. It defines the legal framework for dangerous-goods classes, transport requirements, and route restrictions such as tunnel categories. In the project, these rules are represented as hard compatibility and permission constraints; an illegal connection is excluded instead of merely receiving a high risk penalty.
 
+### German Accident Atlas
+
+**Reference:** Statistical Offices of the Federation and the Länder. Unfallatlas: road accident data as geo-open-data. https://unfallatlas.statistikportal.de/
+
+**Type:** Official data source.
+
+The accident atlas provides georeferenced road-accident information. It is relevant for the data-preparation side of the project because accident observations can be linked to road segments and used as one input for risk-related network attributes. The source supports the availability of accident data, but it does not by itself define the final OD risk value used by the optimization methods.
+
+### Zensus 2021
+
+**Reference:** Statistisches Bundesamt (Destatis). Zensus 2021 population data. https://www.zensus2022.de/
+
+**Type:** Official data source.
+
+Zensus population data support the exposure perspective of hazardous-material routing. They can be used to estimate how many people may be located near a road segment or within a relevant buffer around a route. This source helps ground population exposure as a data component, while the exact aggregation into the project risk field remains part of the data-preparation documentation.
+
+### Bundesnetzagentur Charging Infrastructure Data
+
+**Reference:** Bundesnetzagentur. Ladesäulenregister: location and power data for public charging infrastructure in Germany. https://www.bundesnetzagentur.de/
+
+**Type:** Official infrastructure data source.
+
+The Bundesnetzagentur charging-station register is relevant for the electric-vehicle part of the project. It provides location and power information for public charging infrastructure, which can be used to identify possible charging nodes or hubs. In the optimization model and heuristic, these data support energy feasibility and charging decisions rather than hazardous-material risk itself.
+
+### Technik+Einkauf (2026)
+
+**Reference:** Technik+Einkauf. (2026). Die größten Raffinerien in Deutschland.
+
+**Type:** Practical background source.
+
+This source is used as practical background for the scenario design, especially the choice of refinery-related depot context. It is not an OR or risk-modeling source, but it helps justify why a refinery location can be a plausible origin for fuel or hazardous-material distribution scenarios.
+
 ## Project Implications from the Literature
 
 Together, these sources support the full project workflow, from network and risk data to mathematical modeling, exact optimization, heuristic search, and numerical evaluation.
 
 ### Data and regulatory direction
 
-OpenStreetMap and OSMnx provide the physical road network, while accident, population, and environmental data can contribute different parts of the transport-risk description during preprocessing. Geographic distance methods support mapping and proximity checks, and OD-matrix research informs the conversion of network paths into reusable distance, time, risk, and cost relations. The optimization methods receive these prepared relations rather than the raw GIS layers.
+OpenStreetMap, Geofabrik, and OSMnx provide the physical road network, while the Accident Atlas, Zensus population data, and other spatial information can contribute different parts of the transport-risk description during preprocessing. Geographic information retrieval and distance methods support spatial filtering, mapping, and proximity checks. OD-matrix research informs the conversion of network paths into reusable distance, time, risk, and cost relations. The optimization methods receive these prepared relations rather than the raw GIS layers.
 
-ADR has a different role from the academic sources. It provides the regulatory basis for dangerous-goods classes and route restrictions. Legal incompatibility is therefore represented as a hard feasibility condition rather than as a high but avoidable risk score. Vehicle specifications, charging data, prices, and service times also need traceable sources; values without reliable external evidence should be identified as scenario assumptions.
+ADR has a different role from the academic sources. It provides the regulatory basis for dangerous-goods classes and route restrictions. Legal incompatibility is therefore represented as a hard feasibility condition rather than as a high but avoidable risk score. The Bundesnetzagentur charging register supports the EV-charging data basis, while refinery and scenario-background sources support the construction of plausible depot and customer settings. Vehicle specifications, charging data, prices, and service times still need traceable sources; values without reliable external evidence should be identified as scenario assumptions.
 
 ### Risk and objective direction
 
