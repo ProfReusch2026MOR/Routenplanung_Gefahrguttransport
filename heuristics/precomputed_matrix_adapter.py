@@ -77,15 +77,15 @@ else:  # pragma: no cover - direct script execution
     )
 
 
-INSTANCE_FILE_PATTERN = "*instanz_*Timo.csv"
+INSTANCE_FILE_PATTERN = "*instanz*.csv"
 PROJECT_HAZARD_CLASSES = frozenset(
     {"1.1D", "2", "2 (TOC)", "3", "6", "8", "9"}
 )
-DEFAULT_SERVICE_MINUTES = 30.0
+DEFAULT_SERVICE_MINUTES = 45.0
 DEFAULT_SHIFT_END_MINUTES = 600.0
 DEFAULT_DEPOT_ENERGY_PRICE = 0.35
 DEFAULT_CHARGER_ENERGY_PRICE = 0.75
-DEFAULT_CHARGER_POWER_KW = 300.0
+DEFAULT_CHARGER_POWER_KW = 999999.0  # fixed 45-min break, matches solver recharge_time
 
 INSTANCE_COLUMNS = {
     "id",
@@ -112,6 +112,7 @@ OD_COLUMNS = {
     "dist_km",
     "cost",
     "time_min",
+    "risk_total",
     "reachable",
     "tunnel_used",
 }
@@ -139,6 +140,9 @@ class MatrixAdapterResult:
     included_customers: Tuple[str, ...]
     excluded_customers: Tuple[str, ...]
     illegal_loaded_relations: Tuple[Tuple[str, str], ...]
+    penalty_risk_relations: Tuple[Tuple[str, str], ...]
+    risk_penalty_prem: float
+    risk_penalty_applied: bool
     risk_source: str
     warnings: Tuple[str, ...]
 
@@ -187,7 +191,7 @@ def _find_instance_file(
     if len(matches) > 1:
         names = ", ".join(path.name for path in matches)
         raise InputDataError(
-            "Several Timo instance files were found. Select one with "
+            "Several instance files were found. Select one with "
             f"--instance-file: {names}"
         )
     return matches[0]
@@ -603,33 +607,31 @@ def _load_regular_legs(
     allowed_classes = tuple(sorted(set(hazard_classes)))
     legs: Dict[Tuple[str, str], Leg] = {}
     illegal: List[Tuple[str, str]] = []
+
     for row in safest_loaded.itertuples(index=False):
         from_stop = str(row.from_stop).strip()
         to_stop = str(row.to_stop).strip()
         if from_stop not in stop_set or to_stop not in stop_set:
             continue
         relation = (from_stop, to_stop)
+
         reachable = _as_bool(
             row.reachable,
             f"{from_stop}->{to_stop}.reachable",
         )
-        tunnel_used = _as_bool(
-            row.tunnel_used,
-            f"{from_stop}->{to_stop}.tunnel_used",
-        )
-        numeric = pd.to_numeric(
-            pd.Series([row.dist_km, row.time_min, row.cost]),
+        if not reachable:
+            illegal.append(relation)
+            continue
+
+        dist_numeric = pd.to_numeric(
+            pd.Series([row.dist_km, row.time_min]),
             errors="coerce",
         )
-        metrics_are_finite = all(
+        dist_time_finite = all(
             pd.notna(value) and math.isfinite(float(value))
-            for value in numeric
+            for value in dist_numeric
         )
-        if (
-            not reachable
-            or tunnel_used
-            or not metrics_are_finite
-        ):
+        if not dist_time_finite:
             illegal.append(relation)
             continue
 
@@ -637,24 +639,68 @@ def _load_regular_legs(
             row.dist_km,
             f"{from_stop}->{to_stop}.dist_km",
         )
+        travel_minutes = _finite_nonnegative(
+            row.time_min,
+            f"{from_stop}->{to_stop}.time_min",
+        )
         legs[relation] = Leg(
             from_stop=from_stop,
             to_stop=to_stop,
             distance_km=distance_km,
-            travel_minutes=_finite_nonnegative(
-                row.time_min,
-                f"{from_stop}->{to_stop}.time_min",
-            ),
-            base_risk_rate_per_km=_risk_rate(
-                row.cost,
-                distance_km,
-                f"{from_stop}->{to_stop}.cost",
+            travel_minutes=travel_minutes,
+            base_risk_rate_per_km=_finite_nonnegative(
+                row.risk_total,
+                f"{from_stop}->{to_stop}.risk_total",
             ),
             allowed_classes=allowed_classes,
         )
+    # Override customer->DEPOT legs with empty-profile (fastest/shortest, risk=0)
+    empty_returns = normalized[
+        (normalized["load_state"].astype(str).str.strip().str.lower() == "empty")
+        & normalized["to"].astype(str).str.strip().isin({DEPOT})
+        & normalized["profile"].astype(str).str.strip().str.lower().isin(
+            {"fastest", "shortest"}
+        )
+    ].rename(columns={"from": "from_stop", "to": "to_stop"})
+    if not empty_returns.empty:
+        empty_returns = empty_returns.copy()
+        empty_returns["travel_time_per_dist"] = (
+            pd.to_numeric(empty_returns["time_min"], errors="coerce").fillna(0.0)
+            / pd.to_numeric(empty_returns["dist_km"], errors="coerce")
+            .fillna(1.0)
+            .clip(lower=0.001)
+        )
+        empty_best = empty_returns.sort_values(
+            ["from_stop", "travel_time_per_dist"],
+            kind="mergesort",
+        ).drop_duplicates("from_stop", keep="first")
+        for row in empty_best.itertuples(index=False):
+            from_stop = str(row.from_stop).strip()
+            to_stop = str(row.to_stop).strip()
+            relation = (from_stop, to_stop)
+            if from_stop not in stop_set:
+                continue
+            if not _as_bool(row.reachable, f"{from_stop}->{to_stop}.reachable"):
+                continue
+            try:
+                dist_km_val = float(row.dist_km)
+                time_min_val = float(row.time_min)
+                if not (math.isfinite(dist_km_val) and math.isfinite(time_min_val)
+                        and dist_km_val >= 0 and time_min_val >= 0):
+                    continue
+            except (TypeError, ValueError):
+                continue
+            dist_km = dist_km_val
+            time_min = time_min_val
+            legs[relation] = Leg(
+                from_stop=from_stop,
+                to_stop=to_stop,
+                distance_km=dist_km,
+                travel_minutes=time_min,
+                base_risk_rate_per_km=0.0,
+                allowed_classes=allowed_classes,
+            )
     return legs, tuple(sorted(set(illegal)))
-
-
 def _load_charger_legs(
     frame: pd.DataFrame,
     regular_stops: Sequence[str],
@@ -989,7 +1035,7 @@ def build_matrix_adapter(
     if illegal_relations:
         warnings.append(
             f"{len(illegal_relations)} loaded safest OD relations were "
-            "excluded because they are unreachable, non-finite, or use a tunnel."
+            "excluded because they are unreachable."
         )
 
     source_files = {
@@ -1013,7 +1059,10 @@ def build_matrix_adapter(
         included_customers=included,
         excluded_customers=excluded,
         illegal_loaded_relations=illegal_relations,
-        risk_source="safest.loaded.cost / dist_km",
+        penalty_risk_relations=tuple(),
+        risk_penalty_prem=0.0,
+        risk_penalty_applied=False,
+        risk_source="risk_total (direct)",
         warnings=tuple(warnings),
     )
 
@@ -1054,6 +1103,7 @@ def summarize_adapter(result: MatrixAdapterResult) -> str:
                 for from_stop, to_stop in result.illegal_loaded_relations
             )
         )
+
     for customer_id in result.included_customers:
         lines.append(
             f"customer_name[{customer_id}]="
@@ -1601,6 +1651,7 @@ def build_result_payload(
         },
         "metrics": {
             "total_risk": evaluation.total_risk,
+            "total_risk_solver_compatible": evaluation.total_risk,
             "total_cost": evaluation.total_cost,
             "total_activation_cost": evaluation.total_activation_cost,
             "total_trip_cost": evaluation.total_trip_cost,
@@ -1703,7 +1754,7 @@ def parse_args() -> argparse.Namespace:
         "--instance-file",
         type=Path,
         default=None,
-        help="Explicit instance CSV; otherwise a unique *instanz_*Timo.csv is used.",
+        help="Explicit instance CSV; otherwise a unique *instanz*.csv is used.",
     )
     parser.add_argument(
         "--od-matrix-file",
