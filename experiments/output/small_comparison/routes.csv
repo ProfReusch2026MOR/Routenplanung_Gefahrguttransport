@@ -1,0 +1,24 @@
+scenario,method,vehicle_name,route,stop_count,customer_count
+small_risk_0.3_cost_0.5_time_0.2,heuristic,MAN_eTGX_1,DEPOT -> C4 -> C3 -> C10 -> C6 -> C5 -> DEPOT,7,5
+small_risk_0.3_cost_0.5_time_0.2,heuristic,MAN_eTGX_2,DEPOT -> C9 -> C2 -> C1 -> C7 -> DEPOT,6,4
+small_risk_0.3_cost_0.5_time_0.2,heuristic,MAN_eTGX_3,DEPOT -> C8 -> DEPOT,3,1
+small_risk_0.3_cost_0.5_time_0.2,solver,MAN_eTGX_1,DEPOT -> C2 -> C7 -> C1 -> C8 -> DEPOT,6,4
+small_risk_0.3_cost_0.5_time_0.2,solver,MAN_eTGX_2,DEPOT -> C9 -> C4 -> C3 -> C10 -> C6 -> C5 -> DEPOT,8,6
+small_risk_0.3_cost_0.5_time_0.2,solver,MAN_eTGX_3,,0,0
+small_risk_0.3_cost_0.5_time_0.2,solver,MAN_eTGX_4,,0,0
+small_risk_0.3_cost_0.5_time_0.2,solver,Mercedes_eActros_600_1,,0,0
+small_risk_0.3_cost_0.5_time_0.2,solver,Mercedes_eActros_600_2,,0,0
+small_risk_0.3_cost_0.5_time_0.2,solver,Volvo_FH_Electric_1,,0,0
+small_risk_0.3_cost_0.5_time_0.2,solver,Volvo_FH_Electric_2,,0,0
+small_risk_0.3_cost_0.5_time_0.2,solver,Volvo_FH_Electric_3,,0,0
+small_risk_0.5_cost_0.3_time_0.2,heuristic,MAN_eTGX_1,DEPOT -> C4 -> C9 -> C2 -> C1 -> C7 -> DEPOT,7,5
+small_risk_0.5_cost_0.3_time_0.2,heuristic,MAN_eTGX_2,DEPOT -> C3 -> C10 -> C5 -> C6 -> C8 -> DEPOT,7,5
+small_risk_0.5_cost_0.3_time_0.2,solver,MAN_eTGX_1,DEPOT -> C2 -> C7 -> C1 -> C8 -> DEPOT,6,4
+small_risk_0.5_cost_0.3_time_0.2,solver,MAN_eTGX_2,DEPOT -> C9 -> C4 -> C3 -> C10 -> C6 -> C5 -> DEPOT,8,6
+small_risk_0.5_cost_0.3_time_0.2,solver,MAN_eTGX_3,,0,0
+small_risk_0.5_cost_0.3_time_0.2,solver,MAN_eTGX_4,,0,0
+small_risk_0.5_cost_0.3_time_0.2,solver,Mercedes_eActros_600_1,,0,0
+small_risk_0.5_cost_0.3_time_0.2,solver,Mercedes_eActros_600_2,,0,0
+small_risk_0.5_cost_0.3_time_0.2,solver,Volvo_FH_Electric_1,,0,0
+small_risk_0.5_cost_0.3_time_0.2,solver,Volvo_FH_Electric_2,,0,0
+small_risk_0.5_cost_0.3_time_0.2,solver,Volvo_FH_Electric_3,,0,0
