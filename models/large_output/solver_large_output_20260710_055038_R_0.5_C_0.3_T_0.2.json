@@ -1,0 +1,1112 @@
+{
+  "schema_version": "1.0",
+  "status": "feasible",
+  "search_status": "optimal",
+  "routes": {
+    "MAN_eTGX_1": [
+      "DEPOT",
+      "C21",
+      "C15",
+      "C50",
+      "L315",
+      "C50",
+      "C49",
+      "DEPOT"
+    ],
+    "MAN_eTGX_2": [
+      "DEPOT",
+      "C27",
+      "C28",
+      "C8",
+      "C20",
+      "DEPOT"
+    ],
+    "MAN_eTGX_3": [
+      "DEPOT",
+      "C35",
+      "C36",
+      "C16",
+      "C43",
+      "L396",
+      "C43",
+      "C44",
+      "DEPOT"
+    ],
+    "MAN_eTGX_4": [
+      "DEPOT",
+      "C26",
+      "C1",
+      "C24",
+      "C11",
+      "C10",
+      "L546",
+      "C10",
+      "C18",
+      "DEPOT"
+    ],
+    "Volvo_FH_Electric_1": [
+      "DEPOT",
+      "C25",
+      "C19",
+      "L196",
+      "C19",
+      "C30",
+      "C29",
+      "L83",
+      "C29",
+      "DEPOT"
+    ],
+    "Volvo_FH_Electric_2": [
+      "DEPOT",
+      "C6",
+      "C7",
+      "C5",
+      "C45",
+      "C46",
+      "C47",
+      "L797",
+      "C47",
+      "DEPOT"
+    ],
+    "Volvo_FH_Electric_3": [
+      "DEPOT",
+      "C2",
+      "C39",
+      "C38",
+      "C37",
+      "C40",
+      "C9",
+      "L50",
+      "C9",
+      "DEPOT"
+    ],
+    "Volvo_FH_Electric_4": [
+      "DEPOT",
+      "C31",
+      "C3",
+      "C34",
+      "L363",
+      "C34",
+      "C32",
+      "DEPOT"
+    ],
+    "Mercedes_eActros_600_1": [
+      "DEPOT",
+      "C22",
+      "C14",
+      "C13",
+      "L567",
+      "C13",
+      "C4",
+      "DEPOT"
+    ],
+    "Mercedes_eActros_600_2": [
+      "DEPOT",
+      "C23",
+      "C41",
+      "C17",
+      "C42",
+      "L593",
+      "C42",
+      "DEPOT"
+    ]
+  },
+  "trips": {
+    "MAN_eTGX_1": [
+      [
+        "DEPOT",
+        "C21",
+        "C15",
+        "C50",
+        "L315",
+        "C50",
+        "C49",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_2": [
+      [
+        "DEPOT",
+        "C27",
+        "C28",
+        "C8",
+        "C20",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_3": [
+      [
+        "DEPOT",
+        "C35",
+        "C36",
+        "C16",
+        "C43",
+        "L396",
+        "C43",
+        "C44",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_4": [
+      [
+        "DEPOT",
+        "C26",
+        "C1",
+        "C24",
+        "C11",
+        "C10",
+        "L546",
+        "C10",
+        "C18",
+        "DEPOT"
+      ]
+    ],
+    "Volvo_FH_Electric_1": [
+      [
+        "DEPOT",
+        "C25",
+        "C19",
+        "L196",
+        "C19",
+        "C30",
+        "C29",
+        "L83",
+        "C29",
+        "DEPOT"
+      ]
+    ],
+    "Volvo_FH_Electric_2": [
+      [
+        "DEPOT",
+        "C6",
+        "C7",
+        "C5",
+        "C45",
+        "C46",
+        "C47",
+        "L797",
+        "C47",
+        "DEPOT"
+      ]
+    ],
+    "Volvo_FH_Electric_3": [
+      [
+        "DEPOT",
+        "C2",
+        "C39",
+        "C38",
+        "C37",
+        "C40",
+        "C9",
+        "L50",
+        "C9",
+        "DEPOT"
+      ]
+    ],
+    "Volvo_FH_Electric_4": [
+      [
+        "DEPOT",
+        "C31",
+        "C3",
+        "C34",
+        "L363",
+        "C34",
+        "C32",
+        "DEPOT"
+      ]
+    ],
+    "Mercedes_eActros_600_1": [
+      [
+        "DEPOT",
+        "C22",
+        "C14",
+        "C13",
+        "L567",
+        "C13",
+        "C4",
+        "DEPOT"
+      ]
+    ],
+    "Mercedes_eActros_600_2": [
+      [
+        "DEPOT",
+        "C23",
+        "C41",
+        "C17",
+        "C42",
+        "L593",
+        "C42",
+        "DEPOT"
+      ]
+    ]
+  },
+  "charging_side_trips": {
+    "MAN_eTGX_1": [
+      "L315"
+    ],
+    "MAN_eTGX_2": [],
+    "MAN_eTGX_3": [
+      "L396"
+    ],
+    "MAN_eTGX_4": [
+      "L546"
+    ],
+    "Volvo_FH_Electric_1": [
+      "L196",
+      "L83"
+    ],
+    "Volvo_FH_Electric_2": [
+      "L797"
+    ],
+    "Volvo_FH_Electric_3": [
+      "L50"
+    ],
+    "Volvo_FH_Electric_4": [
+      "L363"
+    ],
+    "Mercedes_eActros_600_1": [
+      "L567"
+    ],
+    "Mercedes_eActros_600_2": [
+      "L593"
+    ]
+  },
+  "technical_routes": {
+    "MAN_eTGX_1": [
+      [
+        "DEPOT",
+        "C21",
+        "C15",
+        "C50",
+        "L315",
+        "C50",
+        "C49",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_2": [
+      [
+        "DEPOT",
+        "C27",
+        "C28",
+        "C8",
+        "C20",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_3": [
+      [
+        "DEPOT",
+        "C35",
+        "C36",
+        "C16",
+        "C43",
+        "L396",
+        "C43",
+        "C44",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_4": [
+      [
+        "DEPOT",
+        "C26",
+        "C1",
+        "C24",
+        "C11",
+        "C10",
+        "L546",
+        "C10",
+        "C18",
+        "DEPOT"
+      ]
+    ],
+    "Volvo_FH_Electric_1": [
+      [
+        "DEPOT",
+        "C25",
+        "C19",
+        "L196",
+        "C19",
+        "C30",
+        "C29",
+        "L83",
+        "C29",
+        "DEPOT"
+      ]
+    ],
+    "Volvo_FH_Electric_2": [
+      [
+        "DEPOT",
+        "C6",
+        "C7",
+        "C5",
+        "C45",
+        "C46",
+        "C47",
+        "L797",
+        "C47",
+        "DEPOT"
+      ]
+    ],
+    "Volvo_FH_Electric_3": [
+      [
+        "DEPOT",
+        "C2",
+        "C39",
+        "C38",
+        "C37",
+        "C40",
+        "C9",
+        "L50",
+        "C9",
+        "DEPOT"
+      ]
+    ],
+    "Volvo_FH_Electric_4": [
+      [
+        "DEPOT",
+        "C31",
+        "C3",
+        "C34",
+        "L363",
+        "C34",
+        "C32",
+        "DEPOT"
+      ]
+    ],
+    "Mercedes_eActros_600_1": [
+      [
+        "DEPOT",
+        "C22",
+        "C14",
+        "C13",
+        "L567",
+        "C13",
+        "C4",
+        "DEPOT"
+      ]
+    ],
+    "Mercedes_eActros_600_2": [
+      [
+        "DEPOT",
+        "C23",
+        "C41",
+        "C17",
+        "C42",
+        "L593",
+        "C42",
+        "DEPOT"
+      ]
+    ]
+  },
+  "street_profiles": [
+    {
+      "from": "DEPOT",
+      "to": "C21",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C15",
+      "to": "C50",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C21",
+      "to": "C15",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C50",
+      "to": "C49",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C49",
+      "to": "DEPOT",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "fastest"
+    },
+    {
+      "from": "C50",
+      "to": "L315",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "charger_route"
+    },
+    {
+      "from": "L315",
+      "to": "C50",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "charger_route"
+    },
+    {
+      "from": "DEPOT",
+      "to": "C27",
+      "vehicle": "MAN_eTGX_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C8",
+      "to": "C20",
+      "vehicle": "MAN_eTGX_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C27",
+      "to": "C28",
+      "vehicle": "MAN_eTGX_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C28",
+      "to": "C8",
+      "vehicle": "MAN_eTGX_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C20",
+      "to": "DEPOT",
+      "vehicle": "MAN_eTGX_2",
+      "profile": "fastest"
+    },
+    {
+      "from": "DEPOT",
+      "to": "C35",
+      "vehicle": "MAN_eTGX_3",
+      "profile": "safest"
+    },
+    {
+      "from": "C16",
+      "to": "C43",
+      "vehicle": "MAN_eTGX_3",
+      "profile": "safest"
+    },
+    {
+      "from": "C35",
+      "to": "C36",
+      "vehicle": "MAN_eTGX_3",
+      "profile": "safest"
+    },
+    {
+      "from": "C36",
+      "to": "C16",
+      "vehicle": "MAN_eTGX_3",
+      "profile": "safest"
+    },
+    {
+      "from": "C43",
+      "to": "C44",
+      "vehicle": "MAN_eTGX_3",
+      "profile": "safest"
+    },
+    {
+      "from": "C44",
+      "to": "DEPOT",
+      "vehicle": "MAN_eTGX_3",
+      "profile": "shortest"
+    },
+    {
+      "from": "C43",
+      "to": "L396",
+      "vehicle": "MAN_eTGX_3",
+      "profile": "charger_route"
+    },
+    {
+      "from": "L396",
+      "to": "C43",
+      "vehicle": "MAN_eTGX_3",
+      "profile": "charger_route"
+    },
+    {
+      "from": "DEPOT",
+      "to": "C26",
+      "vehicle": "MAN_eTGX_4",
+      "profile": "safest"
+    },
+    {
+      "from": "C1",
+      "to": "C24",
+      "vehicle": "MAN_eTGX_4",
+      "profile": "safest"
+    },
+    {
+      "from": "C10",
+      "to": "C18",
+      "vehicle": "MAN_eTGX_4",
+      "profile": "safest"
+    },
+    {
+      "from": "C11",
+      "to": "C10",
+      "vehicle": "MAN_eTGX_4",
+      "profile": "safest"
+    },
+    {
+      "from": "C24",
+      "to": "C11",
+      "vehicle": "MAN_eTGX_4",
+      "profile": "safest"
+    },
+    {
+      "from": "C26",
+      "to": "C1",
+      "vehicle": "MAN_eTGX_4",
+      "profile": "safest"
+    },
+    {
+      "from": "C18",
+      "to": "DEPOT",
+      "vehicle": "MAN_eTGX_4",
+      "profile": "fastest"
+    },
+    {
+      "from": "C10",
+      "to": "L546",
+      "vehicle": "MAN_eTGX_4",
+      "profile": "charger_route"
+    },
+    {
+      "from": "L546",
+      "to": "C10",
+      "vehicle": "MAN_eTGX_4",
+      "profile": "charger_route"
+    },
+    {
+      "from": "DEPOT",
+      "to": "C25",
+      "vehicle": "Volvo_FH_Electric_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C19",
+      "to": "C30",
+      "vehicle": "Volvo_FH_Electric_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C25",
+      "to": "C19",
+      "vehicle": "Volvo_FH_Electric_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C30",
+      "to": "C29",
+      "vehicle": "Volvo_FH_Electric_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C29",
+      "to": "DEPOT",
+      "vehicle": "Volvo_FH_Electric_1",
+      "profile": "shortest"
+    },
+    {
+      "from": "C19",
+      "to": "L196",
+      "vehicle": "Volvo_FH_Electric_1",
+      "profile": "charger_route"
+    },
+    {
+      "from": "L196",
+      "to": "C19",
+      "vehicle": "Volvo_FH_Electric_1",
+      "profile": "charger_route"
+    },
+    {
+      "from": "C29",
+      "to": "L83",
+      "vehicle": "Volvo_FH_Electric_1",
+      "profile": "charger_route"
+    },
+    {
+      "from": "L83",
+      "to": "C29",
+      "vehicle": "Volvo_FH_Electric_1",
+      "profile": "charger_route"
+    },
+    {
+      "from": "DEPOT",
+      "to": "C6",
+      "vehicle": "Volvo_FH_Electric_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C5",
+      "to": "C45",
+      "vehicle": "Volvo_FH_Electric_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C6",
+      "to": "C7",
+      "vehicle": "Volvo_FH_Electric_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C7",
+      "to": "C5",
+      "vehicle": "Volvo_FH_Electric_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C45",
+      "to": "C46",
+      "vehicle": "Volvo_FH_Electric_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C46",
+      "to": "C47",
+      "vehicle": "Volvo_FH_Electric_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C47",
+      "to": "DEPOT",
+      "vehicle": "Volvo_FH_Electric_2",
+      "profile": "fastest"
+    },
+    {
+      "from": "C47",
+      "to": "L797",
+      "vehicle": "Volvo_FH_Electric_2",
+      "profile": "charger_route"
+    },
+    {
+      "from": "L797",
+      "to": "C47",
+      "vehicle": "Volvo_FH_Electric_2",
+      "profile": "charger_route"
+    },
+    {
+      "from": "DEPOT",
+      "to": "C2",
+      "vehicle": "Volvo_FH_Electric_3",
+      "profile": "safest"
+    },
+    {
+      "from": "C2",
+      "to": "C39",
+      "vehicle": "Volvo_FH_Electric_3",
+      "profile": "safest"
+    },
+    {
+      "from": "C37",
+      "to": "C40",
+      "vehicle": "Volvo_FH_Electric_3",
+      "profile": "safest"
+    },
+    {
+      "from": "C38",
+      "to": "C37",
+      "vehicle": "Volvo_FH_Electric_3",
+      "profile": "safest"
+    },
+    {
+      "from": "C39",
+      "to": "C38",
+      "vehicle": "Volvo_FH_Electric_3",
+      "profile": "safest"
+    },
+    {
+      "from": "C40",
+      "to": "C9",
+      "vehicle": "Volvo_FH_Electric_3",
+      "profile": "safest"
+    },
+    {
+      "from": "C9",
+      "to": "DEPOT",
+      "vehicle": "Volvo_FH_Electric_3",
+      "profile": "fastest"
+    },
+    {
+      "from": "C9",
+      "to": "L50",
+      "vehicle": "Volvo_FH_Electric_3",
+      "profile": "charger_route"
+    },
+    {
+      "from": "L50",
+      "to": "C9",
+      "vehicle": "Volvo_FH_Electric_3",
+      "profile": "charger_route"
+    },
+    {
+      "from": "DEPOT",
+      "to": "C31",
+      "vehicle": "Volvo_FH_Electric_4",
+      "profile": "safest"
+    },
+    {
+      "from": "C3",
+      "to": "C34",
+      "vehicle": "Volvo_FH_Electric_4",
+      "profile": "safest"
+    },
+    {
+      "from": "C31",
+      "to": "C3",
+      "vehicle": "Volvo_FH_Electric_4",
+      "profile": "safest"
+    },
+    {
+      "from": "C34",
+      "to": "C32",
+      "vehicle": "Volvo_FH_Electric_4",
+      "profile": "safest"
+    },
+    {
+      "from": "C32",
+      "to": "DEPOT",
+      "vehicle": "Volvo_FH_Electric_4",
+      "profile": "fastest"
+    },
+    {
+      "from": "C34",
+      "to": "L363",
+      "vehicle": "Volvo_FH_Electric_4",
+      "profile": "charger_route"
+    },
+    {
+      "from": "L363",
+      "to": "C34",
+      "vehicle": "Volvo_FH_Electric_4",
+      "profile": "charger_route"
+    },
+    {
+      "from": "DEPOT",
+      "to": "C22",
+      "vehicle": "Mercedes_eActros_600_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C13",
+      "to": "C4",
+      "vehicle": "Mercedes_eActros_600_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C14",
+      "to": "C13",
+      "vehicle": "Mercedes_eActros_600_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C22",
+      "to": "C14",
+      "vehicle": "Mercedes_eActros_600_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C4",
+      "to": "DEPOT",
+      "vehicle": "Mercedes_eActros_600_1",
+      "profile": "shortest"
+    },
+    {
+      "from": "C13",
+      "to": "L567",
+      "vehicle": "Mercedes_eActros_600_1",
+      "profile": "charger_route"
+    },
+    {
+      "from": "L567",
+      "to": "C13",
+      "vehicle": "Mercedes_eActros_600_1",
+      "profile": "charger_route"
+    },
+    {
+      "from": "DEPOT",
+      "to": "C23",
+      "vehicle": "Mercedes_eActros_600_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C17",
+      "to": "C42",
+      "vehicle": "Mercedes_eActros_600_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C23",
+      "to": "C41",
+      "vehicle": "Mercedes_eActros_600_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C41",
+      "to": "C17",
+      "vehicle": "Mercedes_eActros_600_2",
+      "profile": "safest"
+    },
+    {
+      "from": "C42",
+      "to": "DEPOT",
+      "vehicle": "Mercedes_eActros_600_2",
+      "profile": "fastest"
+    },
+    {
+      "from": "C42",
+      "to": "L593",
+      "vehicle": "Mercedes_eActros_600_2",
+      "profile": "charger_route"
+    },
+    {
+      "from": "L593",
+      "to": "C42",
+      "vehicle": "Mercedes_eActros_600_2",
+      "profile": "charger_route"
+    }
+  ],
+  "metadata": {
+    "dataset_name": "Solver_Instance",
+    "construction_strategy": "mip_solver",
+    "included_customers": [
+      "C1",
+      "C2",
+      "C3",
+      "C4",
+      "C5",
+      "C6",
+      "C7",
+      "C8",
+      "C9",
+      "C10",
+      "C11",
+      "C13",
+      "C14",
+      "C15",
+      "C16",
+      "C17",
+      "C18",
+      "C19",
+      "C20",
+      "C21",
+      "C22",
+      "C23",
+      "C24",
+      "C25",
+      "C26",
+      "C27",
+      "C28",
+      "C29",
+      "C30",
+      "C31",
+      "C32",
+      "C34",
+      "C35",
+      "C36",
+      "C37",
+      "C38",
+      "C39",
+      "C40",
+      "C41",
+      "C42",
+      "C43",
+      "C44",
+      "C45",
+      "C46",
+      "C47",
+      "C49",
+      "C50"
+    ],
+    "excluded_customers": [],
+    "served_customers": [
+      "C43",
+      "C42",
+      "C4",
+      "C8",
+      "C38",
+      "C28",
+      "C17",
+      "C20",
+      "C22",
+      "C13",
+      "C35",
+      "C6",
+      "C40",
+      "C3",
+      "C32",
+      "C10",
+      "C39",
+      "C21",
+      "C49",
+      "C11",
+      "C1",
+      "C41",
+      "C36",
+      "C31",
+      "C34",
+      "C7",
+      "C15",
+      "C9",
+      "C27",
+      "C14",
+      "C30",
+      "C19",
+      "C18",
+      "C23",
+      "C16",
+      "C46",
+      "C44",
+      "C50",
+      "C26",
+      "C24",
+      "C45",
+      "C2",
+      "C5",
+      "C37",
+      "C25",
+      "C47",
+      "C29"
+    ],
+    "unserved_customers": [],
+    "customer_names": {
+      "DEPOT": "Start_Depot_Leuna",
+      "C1": "Industriegebiet_Leipzig",
+      "C2": "Industriegebiet_Halle",
+      "C3": "Industriegebiet_Dresden",
+      "C4": "Tankstelle_Chemnitz",
+      "C5": "Industriegebiet_Erfurt",
+      "C6": "Industriegebiet_Jena",
+      "C7": "DHL_Nhora",
+      "C8": "Tankstelle_Gera",
+      "C9": "Industriegebiet_Magdeburg",
+      "C10": "DB_Werkstatt_Dessau",
+      "C11": "Chemiepark_Bitterfeld",
+      "C13": "Logistik_Zwickau",
+      "C14": "Aral_Plauen",
+      "C15": "Tankstelle_Hof",
+      "C16": "Industriegebiet_Nordhausen",
+      "C17": "Gewerbegebiet_Halberstadt",
+      "C18": "Industriepark_Wittenberg",
+      "C19": "Tankstelle_Torgau",
+      "C20": "Tankstelle_Naumburg",
+      "C21": "Tankstelle_Merseburg",
+      "C22": "Tankstelle_Weissenfels",
+      "C23": "Hermes_Schkeuditz",
+      "C24": "Tankstelle_Delitzsch",
+      "C25": "Spedition_Wurzen",
+      "C26": "Kartbahn_Grimma",
+      "C27": "Gewerbegebiet_Borna",
+      "C28": "Industriegebiet_Altenburg",
+      "C29": "Industriegebiet_Meissen",
+      "C30": "Industriegebiet_Riesa",
+      "C31": "Industriegebiet_Freiberg",
+      "C32": "Industriegebiet_Bautzen",
+      "C34": "Industriegebiet_Senftenberg",
+      "C35": "Industriegebiet_Lutherstadt_Eisleben",
+      "C36": "Gewerbegebiet_Sangerhausen",
+      "C37": "Industriegebiet_Aschersleben",
+      "C38": "Industriegebiet_Bernburg",
+      "C39": "Gewerbegebiet_Koethen",
+      "C40": "Tankstelle_Stassfurt",
+      "C41": "Gewerbegebiet_Wernigerode",
+      "C42": "Tankstelle_Quedlinburg",
+      "C43": "Gewerbegebiet_Sondershausen",
+      "C44": "Tankstelle_Muehlhausen",
+      "C45": "Industriegebiet_Gotha",
+      "C46": "Gewerbegebiet_Arnstadt",
+      "C47": "Industriegebiet_Ilmenau",
+      "C49": "Industriegebiet_Coburg",
+      "C50": "Hafen_Bamberg"
+    },
+    "vehicle_ids": [
+      "MAN_eTGX_1",
+      "MAN_eTGX_2",
+      "MAN_eTGX_3",
+      "MAN_eTGX_4",
+      "Volvo_FH_Electric_1",
+      "Volvo_FH_Electric_2",
+      "Volvo_FH_Electric_3",
+      "Volvo_FH_Electric_4",
+      "Mercedes_eActros_600_1",
+      "Mercedes_eActros_600_2"
+    ],
+    "vehicle_hazard_compatibility": {
+      "MAN_eTGX_1": [
+        "3"
+      ],
+      "MAN_eTGX_2": [
+        "3"
+      ],
+      "MAN_eTGX_3": [
+        "3"
+      ],
+      "MAN_eTGX_4": [
+        "3"
+      ],
+      "Volvo_FH_Electric_1": [
+        "3"
+      ],
+      "Volvo_FH_Electric_2": [
+        "3"
+      ],
+      "Volvo_FH_Electric_3": [
+        "3"
+      ],
+      "Volvo_FH_Electric_4": [
+        "3"
+      ],
+      "Mercedes_eActros_600_1": [
+        "3"
+      ],
+      "Mercedes_eActros_600_2": [
+        "3"
+      ]
+    },
+    "vehicle_hazard_compatibility_source": "mip_solver_assumption",
+    "risk_source": "solver_eval_cost_preprocessing",
+    "single_trip_per_vehicle": true,
+    "warnings": [
+      "This JSON was generated dynamically from the PuLP MIP Solver."
+    ]
+  },
+  "objective": {
+    "value": 0.36064759670603236,
+    "weights": {
+      "risk": 0.5,
+      "cost": 0.3,
+      "time": 0.2
+    },
+    "scales": {
+      "risk": 49.1283,
+      "cost": 42960.76918,
+      "time": 7800.0,
+      "risk_active": true
+    }
+  },
+  "metrics": {
+    "total_risk": 7.402899999999998,
+    "total_cost": 17223.016545000006,
+    "total_activation_cost": 11800.0,
+    "total_trip_cost": 0.0,
+    "total_road_operating_cost": 2407.0685399999998,
+    "total_station_charging_cost": 3015.9480049999997,
+    "total_end_of_day_recharge_cost": 0.0,
+    "total_distance_km": 4108.2847,
+    "total_travel_minutes": 3871.355899999999,
+    "total_service_minutes": 2115.0,
+    "total_waiting_minutes": 0.0,
+    "total_charging_minutes": 450.0,
+    "total_break_minutes": 0.0,
+    "total_time_minutes": 6436.355900000002,
+    "makespan_minute": 780.0,
+    "total_charging_events": 10
+  },
+  "runtime_seconds": {
+    "data_loading": 7.361955099971965,
+    "data_preprocessing": 0.7685028000269085,
+    "model_building": 12.009297400014475,
+    "model_solving": 29140.07324409997,
+    "result_processing": 0.8339562999317423,
+    "total": 29161.046955699916
+  },
+  "infeasibility_reasons": []
+}
