@@ -343,8 +343,10 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
         self.assertNotIn((DEPOT, "C2"), result.instance.legs)
         self.assertIn((DEPOT, "C2"), result.illegal_loaded_relations)
         self.assertIn(("C2", DEPOT), result.instance.legs)
-        self.assertEqual(result.risk_source, "risk_total (direct)")
-        self.assertFalse(result.risk_penalty_applied)
+        self.assertEqual(
+            result.risk_source,
+            "risk_total as per-km rate; leg risk = risk_total * distance_km",
+        )
 
     def test_charger_candidate_requires_both_legal_directions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -722,6 +724,15 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
             100,
         )
         self.assertEqual(
+            payload["metadata"]["scenario_parameters"]["service_minutes"],
+            45.0,
+        )
+        self.assertEqual(
+            payload["metadata"]["scenario_parameters"]["reserve_fraction"],
+            0.10,
+        )
+        self.assertNotIn("total_risk_solver_compatible", payload["metrics"])
+        self.assertEqual(
             payload["objective"]["scales"]["risk"],
             run.scales.risk,
         )
@@ -881,6 +892,7 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
             instance=instance,
             dataset_name="toy",
             source_files={},
+            scenario_parameters={},
             customer_names={
                 customer_id: customer_id
                 for customer_id in instance.customers
@@ -893,9 +905,6 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
             included_customers=tuple(instance.customers),
             excluded_customers=tuple(),
             illegal_loaded_relations=tuple(),
-            penalty_risk_relations=tuple(),
-            risk_penalty_prem=0.0,
-            risk_penalty_applied=False,
             risk_source="toy",
             warnings=tuple(),
         )

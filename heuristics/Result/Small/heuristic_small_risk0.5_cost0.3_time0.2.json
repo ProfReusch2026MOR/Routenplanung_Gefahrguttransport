@@ -183,7 +183,7 @@
       ]
     },
     "vehicle_hazard_compatibility_source": "assumption_all_vehicles_support_all_instance_classes",
-    "risk_source": "risk_total (direct)",
+    "risk_source": "risk_total as per-km rate; leg risk = risk_total * distance_km",
     "max_charging_branch_evaluations": 1000,
     "repair": null,
     "depth_two_repair": null,
@@ -203,9 +203,9 @@
     "requires_solver_importer_validation": true,
     "warnings": [
       "Customer quantities in Liter are converted with 1 Liter = 1 kg.",
-      "The safest loaded OD cost is provisionally treated as total path risk and divided by path distance.",
-      "The loaded HazMat-safe OD path is conservatively reused for empty travel because the upper-level Leg has no load-state field.",
-      "Charging-station power and energy price use adapter defaults; the charger CSV contains no station-specific values.",
+      "Regular loaded OD risk_total is interpreted as a per-kilometre risk rate and multiplied by leg distance during evaluation.",
+      "Customer-to-depot travel uses one reachable fastest/shortest empty profile with zero cargo-related risk; other regular legs use the safest loaded profile.",
+      "Charging-station power and energy price use adapter defaults. Charging duration remains energy-based and is limited by the vehicle charging power.",
       "Vehicle payload uses fuel_capacity_l and activation cost uses fixcost to match the current solver assumptions.",
       "Service, loading, shift, driving, and break times are adapter scenario settings because the supplied CSVs do not contain them.",
       "Vehicle-hazard compatibility is an explicit adapter assumption: all vehicles support all hazard classes present in this instance."
@@ -227,7 +227,6 @@
   },
   "metrics": {
     "total_risk": 12.67297838352454,
-    "total_risk_solver_compatible": 12.67297838352454,
     "total_cost": 3709.2184139059855,
     "total_activation_cost": 3000.0,
     "total_trip_cost": 0.0,
