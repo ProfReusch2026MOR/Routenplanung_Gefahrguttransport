@@ -56,8 +56,6 @@ Die Projektstruktur ist entlang der Kernbereiche Daten, Modellierung, Heuristik 
 ### `models/`
 
 - `models/math_model/Math_Model_Hazmat.ipynb`: Mathematische Modellierung
-- `models/Gefahrgut_Routenplanung_MILP-pulp.mps`: Exportiertes MILP-Modell
-- `models/Gefahrgut_Routenplanung_MILP-pulp.sol`: Beispielhafte Solver-Lösung
 - `models/Solver/`: Solver-Notebooks und Ergebnisordner für Small/Medium/Large
 
 ### `heuristics/`
