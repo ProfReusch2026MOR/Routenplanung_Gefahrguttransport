@@ -184,19 +184,19 @@
       "from": "DEPOT",
       "to": "C11",
       "vehicle": "MAN_eTGX_1",
-      "profile": "fastest"
+      "profile": "safest"
     },
     {
       "from": "C11",
       "to": "C17",
       "vehicle": "MAN_eTGX_1",
-      "profile": "fastest"
+      "profile": "safest"
     },
     {
       "from": "C17",
       "to": "C9",
       "vehicle": "MAN_eTGX_1",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
       "from": "C9",
@@ -208,25 +208,25 @@
       "from": "DEPOT",
       "to": "C15",
       "vehicle": "MAN_eTGX_2",
-      "profile": "fastest"
+      "profile": "safest"
     },
     {
       "from": "C13",
       "to": "C4",
       "vehicle": "MAN_eTGX_2",
-      "profile": "fastest"
+      "profile": "safest"
     },
     {
       "from": "C14",
       "to": "C13",
       "vehicle": "MAN_eTGX_2",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
       "from": "C15",
       "to": "C14",
       "vehicle": "MAN_eTGX_2",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
       "from": "C4",
@@ -238,25 +238,25 @@
       "from": "DEPOT",
       "to": "C10",
       "vehicle": "Volvo_FH_Electric_1",
-      "profile": "fastest"
+      "profile": "safest"
     },
     {
       "from": "C10",
       "to": "C18",
       "vehicle": "Volvo_FH_Electric_1",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
       "from": "C18",
       "to": "C19",
       "vehicle": "Volvo_FH_Electric_1",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
       "from": "C19",
       "to": "C20",
       "vehicle": "Volvo_FH_Electric_1",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
       "from": "C20",
@@ -268,31 +268,31 @@
       "from": "DEPOT",
       "to": "C8",
       "vehicle": "Volvo_FH_Electric_2",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
       "from": "C5",
       "to": "C16",
       "vehicle": "Volvo_FH_Electric_2",
-      "profile": "fastest"
+      "profile": "safest"
     },
     {
       "from": "C6",
       "to": "C7",
       "vehicle": "Volvo_FH_Electric_2",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
       "from": "C7",
       "to": "C5",
       "vehicle": "Volvo_FH_Electric_2",
-      "profile": "fastest"
+      "profile": "safest"
     },
     {
       "from": "C8",
       "to": "C6",
       "vehicle": "Volvo_FH_Electric_2",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
       "from": "C16",
@@ -304,25 +304,25 @@
       "from": "DEPOT",
       "to": "C2",
       "vehicle": "Volvo_FH_Electric_3",
-      "profile": "fastest"
+      "profile": "safest"
     },
     {
       "from": "C1",
       "to": "C3",
       "vehicle": "Volvo_FH_Electric_3",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
       "from": "C2",
       "to": "C1",
       "vehicle": "Volvo_FH_Electric_3",
-      "profile": "fastest"
+      "profile": "safest"
     },
     {
       "from": "C3",
       "to": "C12",
       "vehicle": "Volvo_FH_Electric_3",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
       "from": "C12",
@@ -334,13 +334,13 @@
       "from": "C12",
       "to": "L146",
       "vehicle": "Volvo_FH_Electric_3",
-      "profile": "safest"
+      "profile": "charger_route"
     },
     {
       "from": "L146",
       "to": "C12",
       "vehicle": "Volvo_FH_Electric_3",
-      "profile": "safest"
+      "profile": "charger_route"
     }
   ],
   "metadata": {
@@ -371,25 +371,25 @@
     "excluded_customers": [],
     "served_customers": [
       "C3",
-      "C10",
-      "C19",
-      "C13",
+      "C16",
       "C9",
-      "C11",
-      "C2",
-      "C20",
-      "C5",
-      "C18",
+      "C19",
+      "C15",
       "C7",
       "C14",
-      "C8",
-      "C15",
+      "C20",
+      "C1",
       "C17",
+      "C18",
+      "C5",
+      "C10",
       "C6",
       "C12",
-      "C1",
+      "C8",
       "C4",
-      "C16"
+      "C2",
+      "C11",
+      "C13"
     ],
     "unserved_customers": [],
     "customer_names": {
@@ -495,12 +495,12 @@
     "total_charging_events": 1
   },
   "runtime_seconds": {
-    "data_loading": 1.5922647000988945,
-    "data_preprocessing": 0.21187229990027845,
-    "model_building": 2.2559047000249848,
-    "model_solving": 17992.06814420002,
-    "result_processing": 0.11632070003543049,
-    "total": 17996.24450660008
+    "data_loading": 1.2454838000703603,
+    "data_preprocessing": 0.21235549997072667,
+    "model_building": 2.1888895999873057,
+    "model_solving": 17992.113758099964,
+    "result_processing": 0.09293310006614774,
+    "total": 17995.85342010006
   },
   "infeasibility_reasons": []
 }
