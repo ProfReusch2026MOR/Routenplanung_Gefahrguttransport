@@ -79,7 +79,7 @@ Die Projektstruktur ist entlang der Kernbereiche Daten, Modellierung, Heuristik 
 - `models/Solver/medium_output/hazmat_evrp_routen_medium.html`: Interaktive Routenvisualisierung der Medium-Instanz
 
 Hinweis zur Ergebnisdarstellung:
-Ein Teil der HTML-Visualisierungen wurde in einer früheren Entwicklungsphase erzeugt, als ein Darstellungsfehler bei der Zuordnung der Routenprofile vorlag. Deshalb kann insbesondere in der Medium-Instanz in einzelnen HTML-Artefakten noch die frühere Profilbezeichnung (z. B. `fastest` oder `shortest`) erscheinen. Für die fachliche Auswertung, Ergebnisinterpretation und Reproduzierbarkeit sind die exportierten Output-JSON-Dateien maßgeblich; dort sind die aktuell gültigen und korrekt berechneten Profilzuordnungen enthalten.
+Ein Teil der HTML-Visualisierungen wurde erzeugt, als ein Darstellungsfehler bei der Zuordnung der Routenprofile vorlag. Deshalb kann insbesondere in der Medium-Instanz in einzelnen HTML-Artefakten noch die frühere Profilbezeichnung (z. B. `fastest` oder `shortest`) erscheinen. Für die fachliche Auswertung, Ergebnisinterpretation und Reproduzierbarkeit sind die exportierten Output-JSON-Dateien maßgeblich; dort sind die aktuell gültigen und korrekt berechneten Profilzuordnungen enthalten.
 
 ### `literature/`
 
