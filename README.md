@@ -42,32 +42,45 @@ Die Projektstruktur ist entlang der Kernbereiche Daten, Modellierung, Heuristik 
 ### Root-Ebene
 
 - `README.md`: Zentrale Projektübersicht mit Zielbild, Rollen, Status und Literatur
-- `review_meeting_progress.md`: Laufender Projektstatus, Aufgabenverteilung, Risiken und To-dos
 - `requirements.current-venv.txt`: Python-Abhängigkeiten der aktiven Entwicklungsumgebung
+- `.gitignore`: Ausschlüsse für Versionskontrolle
 
 ### `data/`
 
 - `data/raw/`: Rohdaten und Vorverarbeitung (u. a. Notebooks zur Datenerzeugung/-bereinigung)
 - `data/processed/`: Modellnahe, aufbereitete Datensätze
+- `data/plausibility.ipynb`: Plausibilitäts- und Konsistenzchecks auf Datenebene
 - Weitere Projektdaten liegen zentral in unserer Sciebo-Cloud.
 
 ### `models/`
 
-- `models/math_model/Math_Model_Hazmat_CVRP-MT.ipynb`: Mathematische Modellierung
+- `models/math_model/Math_Model_Hazmat.ipynb`: Mathematische Modellierung
 - `models/Gefahrgut_Routenplanung_MILP-pulp.mps`: Exportiertes MILP-Modell
 - `models/Gefahrgut_Routenplanung_MILP-pulp.sol`: Beispielhafte Solver-Lösung
+- `models/Solver/`: Solver-Notebooks und Ergebnisordner für Small/Medium/Large
 
 ### `heuristics/`
 
 - `heuristics/real_data_path_heuristic.py`: Heuristischer Pfadansatz auf realen Daten
 - `heuristics/real_data_adapter.py`: Adapter zwischen Daten und Heuristik
+- `heuristics/precomputed_matrix_adapter.py`: Adapter für vorab berechnete OD-Matrizen
 - `heuristics/risk_cost_path_heuristic_toy.py`: Vereinfachter Risiko-Kosten-Ansatz (Toy)
 - `heuristics/test_real_data_path_heuristic.py`: Tests für zentrale Heuristikkomponenten
-- `heuristics/heuristic_design.md`: Designnotizen zur Heuristik
+- `heuristics/README.md`: Überblick zur Heuristik-Komponente
 
 ### `experiments/`
 
-- `experiments/`: Experimentcode und Auswertungsskripte (laufender Aufbau)
+- `experiments/compare_multicustomer_results.py`: Vergleich von Solver- und Heuristik-Ergebnissen
+- `experiments/diagnose_multicustomer_consistency.py`: Konsistenzdiagnostik der Multi-Customer-Resultate
+- `experiments/output/`: Generierte Vergleichs- und Konsistenzberichte
+
+### Visualisierung und Reporting
+
+- `models/Solver/small_output/hazmat_evrp_routen_small.html`: Interaktive Routenvisualisierung der Small-Instanz
+- `models/Solver/medium_output/hazmat_evrp_routen_medium.html`: Interaktive Routenvisualisierung der Medium-Instanz
+
+Hinweis zur Ergebnisdarstellung:
+Ein Teil der HTML-Visualisierungen wurde in einer früheren Entwicklungsphase erzeugt, als ein Darstellungsfehler bei der Zuordnung der Routenprofile vorlag. Deshalb kann insbesondere in der Medium-Instanz in einzelnen HTML-Artefakten noch die frühere Profilbezeichnung (z. B. `fastest` oder `shortest`) erscheinen. Für die fachliche Auswertung, Ergebnisinterpretation und Reproduzierbarkeit sind die exportierten Output-JSON-Dateien maßgeblich; dort sind die aktuell gültigen und korrekt berechneten Profilzuordnungen enthalten.
 
 ### `literature/`
 
