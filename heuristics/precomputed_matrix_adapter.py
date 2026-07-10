@@ -1,8 +1,8 @@
 """Adapt precomputed Small, Medium, or Large CSV data to the heuristic.
 
 The adapter deliberately uses the precomputed OD matrices instead of loading
-the large road graph. It selects the safest loaded path for every regular
-stop pair and conservatively uses that path for both loaded and empty travel.
+the large road graph. It follows the solver's loaded-risk, empty-return,
+charging-cost, time, and normalization formulas.
 """
 
 from __future__ import annotations
@@ -82,10 +82,14 @@ PROJECT_HAZARD_CLASSES = frozenset(
     {"1.1D", "2", "2 (TOC)", "3", "6", "8", "9"}
 )
 DEFAULT_SERVICE_MINUTES = 45.0
-DEFAULT_SHIFT_END_MINUTES = 600.0
-DEFAULT_DEPOT_ENERGY_PRICE = 0.35
-DEFAULT_CHARGER_ENERGY_PRICE = 0.75
+DEFAULT_SHIFT_END_MINUTES = 780.0
+DEFAULT_DEPOT_ENERGY_PRICE = 0.0
+DEFAULT_CHARGER_ENERGY_PRICE = 0.0
 DEFAULT_CHARGER_POWER_KW = 999999.0  # station-side cap; vehicle power still limits charging
+DEFAULT_CHARGER_SESSION_FEE = 300.0
+DEFAULT_FIXED_CHARGING_MINUTES = 45.0
+RISK_TOTAL_WEIGHT = 0.5
+ROAD_PENALTY_WEIGHT = 0.5
 
 INSTANCE_COLUMNS = {
     "id",
@@ -110,9 +114,9 @@ OD_COLUMNS = {
     "profile",
     "load_state",
     "dist_km",
-    "cost",
     "time_min",
     "risk_total",
+    "road_penalty_total",
     "reachable",
     "tunnel_used",
 }
@@ -135,6 +139,8 @@ class MatrixAdapterResult:
     dataset_name: str
     source_files: Mapping[str, str]
     scenario_parameters: Mapping[str, float]
+    risk_parameters: Mapping[str, float]
+    objective_scale_source: str
     customer_names: Mapping[str, str]
     vehicle_hazard_compatibility: Mapping[str, Tuple[str, ...]]
     vehicle_hazard_compatibility_source: str
@@ -567,7 +573,12 @@ def _load_regular_legs(
     frame: pd.DataFrame,
     regular_stops: Sequence[str],
     hazard_classes: Sequence[str],
-) -> Tuple[Dict[Tuple[str, str], Leg], Tuple[Tuple[str, str], ...]]:
+    weights: ObjectiveWeights,
+) -> Tuple[
+    Dict[Tuple[str, str], Leg],
+    Tuple[Tuple[str, str], ...],
+    Dict[str, float],
+]:
     normalized = frame.copy()
     normalized["from"] = normalized["from"].astype(str).str.strip()
     normalized["to"] = normalized["to"].astype(str).str.strip()
@@ -601,104 +612,197 @@ def _load_regular_legs(
             + ", ".join(pairs)
         )
 
-    stop_set = set(regular_stops)
-    allowed_classes = tuple(sorted(set(hazard_classes)))
-    legs: Dict[Tuple[str, str], Leg] = {}
-    illegal: List[Tuple[str, str]] = []
-
+    prepared_loaded = []
     for row in safest_loaded.itertuples(index=False):
         from_stop = str(row.from_stop).strip()
         to_stop = str(row.to_stop).strip()
-        if from_stop not in stop_set or to_stop not in stop_set:
-            continue
-        relation = (from_stop, to_stop)
-
         reachable = _as_bool(
             row.reachable,
             f"{from_stop}->{to_stop}.reachable",
         )
-        if not reachable:
-            illegal.append(relation)
-            continue
-
-        dist_numeric = pd.to_numeric(
-            pd.Series([row.dist_km, row.time_min]),
+        numeric = pd.to_numeric(
+            pd.Series(
+                [
+                    row.dist_km,
+                    row.time_min,
+                    row.risk_total,
+                    row.road_penalty_total,
+                ]
+            ),
             errors="coerce",
         )
-        dist_time_finite = all(
-            pd.notna(value) and math.isfinite(float(value))
-            for value in dist_numeric
+        distance_km, travel_minutes, risk_total, road_penalty = (
+            float(value) if pd.notna(value) else math.nan
+            for value in numeric
         )
-        if not dist_time_finite:
+        if any(
+            math.isfinite(value) and value < 0
+            for value in (
+                distance_km,
+                travel_minutes,
+                risk_total,
+                road_penalty,
+            )
+        ):
+            raise InputDataError(
+                f"{from_stop}->{to_stop}: OD metrics cannot be negative."
+            )
+        valid = (
+            reachable
+            and math.isfinite(distance_km)
+            and math.isfinite(travel_minutes)
+        )
+        prepared_loaded.append(
+            (
+                from_stop,
+                to_stop,
+                valid,
+                distance_km,
+                travel_minutes,
+                risk_total if math.isfinite(risk_total) else 0.0,
+                road_penalty if math.isfinite(road_penalty) else 0.0,
+            )
+        )
+
+    risk_total_max = max(
+        (record[5] for record in prepared_loaded),
+        default=0.0,
+    )
+    road_penalty_max = max(
+        (record[6] for record in prepared_loaded),
+        default=0.0,
+    )
+    risk_total_scale = risk_total_max if risk_total_max > 0 else 1.0
+    road_penalty_scale = road_penalty_max if road_penalty_max > 0 else 1.0
+
+    stop_set = set(regular_stops)
+    allowed_classes = tuple(sorted(set(hazard_classes)))
+    legs: Dict[Tuple[str, str], Leg] = {}
+    illegal: List[Tuple[str, str]] = []
+    for (
+        from_stop,
+        to_stop,
+        valid,
+        distance_km,
+        travel_minutes,
+        risk_total,
+        road_penalty,
+    ) in prepared_loaded:
+        if from_stop not in stop_set or to_stop not in stop_set:
+            continue
+        relation = (from_stop, to_stop)
+        if not valid:
             illegal.append(relation)
             continue
-
-        distance_km = _finite_nonnegative(
-            row.dist_km,
-            f"{from_stop}->{to_stop}.dist_km",
+        path_risk = (
+            RISK_TOTAL_WEIGHT * risk_total / risk_total_scale
+            + ROAD_PENALTY_WEIGHT * road_penalty / road_penalty_scale
         )
-        travel_minutes = _finite_nonnegative(
-            row.time_min,
-            f"{from_stop}->{to_stop}.time_min",
-        )
+        rounded_distance = round(distance_km, 4)
+        rounded_risk = round(path_risk, 4)
         legs[relation] = Leg(
             from_stop=from_stop,
             to_stop=to_stop,
-            distance_km=distance_km,
-            travel_minutes=travel_minutes,
-            base_risk_rate_per_km=_finite_nonnegative(
-                row.risk_total,
-                f"{from_stop}->{to_stop}.risk_total",
+            distance_km=rounded_distance,
+            travel_minutes=round(travel_minutes, 4),
+            base_risk_rate_per_km=(
+                rounded_risk / rounded_distance
+                if rounded_distance > 0
+                else 0.0
             ),
             allowed_classes=allowed_classes,
         )
-    # Override customer->DEPOT legs with empty-profile (fastest/shortest, risk=0)
-    empty_returns = normalized[
+
+    empty_rows = normalized[
         (normalized["load_state"].astype(str).str.strip().str.lower() == "empty")
-        & normalized["to"].astype(str).str.strip().isin({DEPOT})
         & normalized["profile"].astype(str).str.strip().str.lower().isin(
             {"fastest", "shortest"}
         )
     ].rename(columns={"from": "from_stop", "to": "to_stop"})
-    if not empty_returns.empty:
-        empty_returns = empty_returns.copy()
-        empty_returns["travel_time_per_dist"] = (
-            pd.to_numeric(empty_returns["time_min"], errors="coerce").fillna(0.0)
-            / pd.to_numeric(empty_returns["dist_km"], errors="coerce")
-            .fillna(1.0)
-            .clip(lower=0.001)
+    empty_candidates = []
+    for order, row in enumerate(empty_rows.itertuples(index=False)):
+        from_stop = str(row.from_stop).strip()
+        to_stop = str(row.to_stop).strip()
+        profile = str(row.profile).strip().lower()
+        reachable = _as_bool(
+            row.reachable,
+            f"{from_stop}->{to_stop}.{profile}.reachable",
         )
-        empty_best = empty_returns.sort_values(
-            ["from_stop", "travel_time_per_dist"],
-            kind="mergesort",
-        ).drop_duplicates("from_stop", keep="first")
-        for row in empty_best.itertuples(index=False):
-            from_stop = str(row.from_stop).strip()
-            to_stop = str(row.to_stop).strip()
-            relation = (from_stop, to_stop)
-            if from_stop not in stop_set:
-                continue
-            if not _as_bool(row.reachable, f"{from_stop}->{to_stop}.reachable"):
-                continue
-            try:
-                dist_km_val = float(row.dist_km)
-                time_min_val = float(row.time_min)
-                if not (math.isfinite(dist_km_val) and math.isfinite(time_min_val)
-                        and dist_km_val >= 0 and time_min_val >= 0):
-                    continue
-            except (TypeError, ValueError):
-                continue
-            dist_km = dist_km_val
-            time_min = time_min_val
-            legs[relation] = Leg(
-                from_stop=from_stop,
-                to_stop=to_stop,
-                distance_km=dist_km,
-                travel_minutes=time_min,
-                base_risk_rate_per_km=0.0,
-                allowed_classes=allowed_classes,
+        try:
+            distance_km = float(row.dist_km)
+            travel_minutes = float(row.time_min)
+        except (TypeError, ValueError):
+            continue
+        if (
+            not reachable
+            or not math.isfinite(distance_km)
+            or not math.isfinite(travel_minutes)
+            or distance_km < 0
+            or travel_minutes < 0
+        ):
+            continue
+        empty_candidates.append(
+            (
+                from_stop,
+                to_stop,
+                profile,
+                distance_km,
+                travel_minutes,
+                order,
             )
-    return legs, tuple(sorted(set(illegal)))
+        )
+
+    empty_distance_max = max(
+        (candidate[3] for candidate in empty_candidates),
+        default=1.0,
+    )
+    empty_time_max = max(
+        (candidate[4] for candidate in empty_candidates),
+        default=1.0,
+    )
+    if empty_distance_max <= 0:
+        empty_distance_max = 1.0
+    if empty_time_max <= 0:
+        empty_time_max = 1.0
+
+    best_empty: Dict[Tuple[str, str], Tuple[object, ...]] = {}
+    for candidate in empty_candidates:
+        from_stop, to_stop, profile, distance_km, travel_minutes, order = candidate
+        score = (
+            weights.cost * distance_km / empty_distance_max
+            + weights.time * travel_minutes / empty_time_max
+        )
+        key = (score, order, profile)
+        relation = (from_stop, to_stop)
+        incumbent = best_empty.get(relation)
+        if incumbent is None or key < incumbent[0]:
+            best_empty[relation] = (key, candidate)
+
+    for (from_stop, to_stop), (_, candidate) in best_empty.items():
+        if to_stop != DEPOT or from_stop not in stop_set or from_stop == DEPOT:
+            continue
+        _, _, _, distance_km, travel_minutes, _ = candidate
+        rounded_distance = round(distance_km, 4)
+        legs[(from_stop, to_stop)] = Leg(
+            from_stop=from_stop,
+            to_stop=to_stop,
+            distance_km=rounded_distance,
+            travel_minutes=round(travel_minutes, 4),
+            base_risk_rate_per_km=0.0,
+            allowed_classes=allowed_classes,
+        )
+
+    risk_parameters = {
+        "risk_total_weight": RISK_TOTAL_WEIGHT,
+        "road_penalty_weight": ROAD_PENALTY_WEIGHT,
+        "risk_total_max": risk_total_scale,
+        "road_penalty_total_max": road_penalty_scale,
+        "empty_distance_max": empty_distance_max,
+        "empty_time_max": empty_time_max,
+    }
+    return legs, tuple(sorted(set(illegal))), risk_parameters
+
+
 def _load_charger_legs(
     frame: pd.DataFrame,
     regular_stops: Sequence[str],
@@ -706,6 +810,7 @@ def _load_charger_legs(
     charger_power_kw: float,
     charger_energy_price_per_kwh: float,
     charger_session_fee: float,
+    fixed_charging_minutes: float,
 ) -> Tuple[
     Dict[Tuple[str, str], Leg],
     Dict[str, ChargingStation],
@@ -752,20 +857,33 @@ def _load_charger_legs(
         ):
             continue
 
-        distance_km = _finite_nonnegative(
-            row.dist_km,
-            f"{from_stop}->{to_stop}.dist_km",
+        distance_km = round(
+            _finite_nonnegative(
+                row.dist_km,
+                f"{from_stop}->{to_stop}.dist_km",
+            ),
+            4,
+        )
+        total_risk = round(
+            _finite_nonnegative(
+                row.risk,
+                f"{from_stop}->{to_stop}.risk",
+            ),
+            4,
         )
         legs[(from_stop, to_stop)] = Leg(
             from_stop=from_stop,
             to_stop=to_stop,
             distance_km=distance_km,
-            travel_minutes=_finite_nonnegative(
-                row.time_min,
-                f"{from_stop}->{to_stop}.time_min",
+            travel_minutes=round(
+                _finite_nonnegative(
+                    row.time_min,
+                    f"{from_stop}->{to_stop}.time_min",
+                ),
+                4,
             ),
             base_risk_rate_per_km=_risk_rate(
-                row.risk,
+                total_risk,
                 distance_km,
                 f"{from_stop}->{to_stop}.risk",
             ),
@@ -779,6 +897,7 @@ def _load_charger_legs(
             power_kw=charger_power_kw,
             energy_price_per_kwh=charger_energy_price_per_kwh,
             session_fee=charger_session_fee,
+            fixed_charging_minutes=fixed_charging_minutes,
         )
         for station_id in sorted(station_ids)
     }
@@ -805,6 +924,44 @@ def _load_charger_legs(
     return legs, chargers, candidates
 
 
+def _solver_objective_scales(
+    customers: Mapping[str, Customer],
+    vehicles: Mapping[str, Vehicle],
+    regular_legs: Mapping[Tuple[str, str], Leg],
+    charger_session_fee: float,
+    max_shift_minutes: float,
+) -> ObjectiveScales:
+    max_solution_arcs = len(customers) + len(vehicles)
+    max_regular_risk = max(
+        (
+            leg.base_risk_rate_per_km * leg.distance_km
+            for leg in regular_legs.values()
+        ),
+        default=0.0,
+    )
+    max_regular_distance = max(
+        (leg.distance_km for leg in regular_legs.values()),
+        default=0.0,
+    )
+    max_variable_cost = max(
+        (vehicle.road_cost_per_km for vehicle in vehicles.values()),
+        default=0.0,
+    )
+    risk_scale = max_regular_risk * max_solution_arcs
+    cost_scale = (
+        sum(vehicle.activation_cost for vehicle in vehicles.values())
+        + max_regular_distance * max_variable_cost * max_solution_arcs
+        + charger_session_fee * len(customers)
+    )
+    time_scale = max_shift_minutes * len(vehicles)
+    return ObjectiveScales(
+        risk=risk_scale if risk_scale > 0 else 1.0,
+        cost=cost_scale if cost_scale > 0 else 1.0,
+        time=time_scale if time_scale > 0 else 1.0,
+        risk_active=max_regular_risk > 0,
+    )
+
+
 def build_matrix_adapter(
     data_dir: Path,
     *,
@@ -820,18 +977,19 @@ def build_matrix_adapter(
     service_minutes: float = DEFAULT_SERVICE_MINUTES,
     shift_start_minute: float = 0.0,
     shift_end_minute: float = DEFAULT_SHIFT_END_MINUTES,
-    initial_load_minutes: float = 20.0,
-    reload_minutes: float = 15.0,
+    initial_load_minutes: float = 0.0,
+    reload_minutes: float = 0.0,
     max_daily_driving_minutes: float = 540.0,
-    max_daily_working_minutes: float = 600.0,
+    max_daily_working_minutes: float = DEFAULT_SHIFT_END_MINUTES,
     continuous_driving_limit_minutes: float = 270.0,
     break_duration_minutes: float = 45.0,
-    reserve_fraction: float = 0.10,
+    reserve_fraction: float = 0.0,
     depot_charging_power_kw: float = DEFAULT_CHARGER_POWER_KW,
     depot_energy_price_per_kwh: float = DEFAULT_DEPOT_ENERGY_PRICE,
     charger_power_kw: float = DEFAULT_CHARGER_POWER_KW,
     charger_energy_price_per_kwh: float = DEFAULT_CHARGER_ENERGY_PRICE,
-    charger_session_fee: float = 0.0,
+    charger_session_fee: float = DEFAULT_CHARGER_SESSION_FEE,
+    fixed_charging_minutes: float = DEFAULT_FIXED_CHARGING_MINUTES,
     max_charging_branch_evaluations: int = 100,
     weights: ObjectiveWeights = ObjectiveWeights(),
 ) -> MatrixAdapterResult:
@@ -903,6 +1061,7 @@ def build_matrix_adapter(
         "charger_power_kw": charger_power_kw,
         "charger_energy_price_per_kwh": charger_energy_price_per_kwh,
         "charger_session_fee": charger_session_fee,
+        "fixed_charging_minutes": fixed_charging_minutes,
         "reserve_fraction": reserve_fraction,
     }
     for label, value in scalar_parameters.items():
@@ -915,6 +1074,7 @@ def build_matrix_adapter(
             continuous_driving_limit_minutes,
         ),
         ("break_duration_minutes", break_duration_minutes),
+        ("fixed_charging_minutes", fixed_charging_minutes),
         ("max_daily_driving_minutes", max_daily_driving_minutes),
         ("max_daily_working_minutes", max_daily_working_minutes),
     ):
@@ -969,10 +1129,11 @@ def build_matrix_adapter(
         )
 
     regular_stops = (DEPOT, *included)
-    regular_legs, illegal_relations = _load_regular_legs(
+    regular_legs, illegal_relations, risk_parameters = _load_regular_legs(
         od_frame,
         regular_stops,
         hazard_classes,
+        weights,
     )
     charger_legs, chargers, charger_candidates = _load_charger_legs(
         charger_frame,
@@ -981,8 +1142,16 @@ def build_matrix_adapter(
         charger_power_kw,
         charger_energy_price_per_kwh,
         charger_session_fee,
+        fixed_charging_minutes,
     )
     legs = {**regular_legs, **charger_legs}
+    objective_scales = _solver_objective_scales(
+        customers,
+        vehicles,
+        regular_legs,
+        charger_session_fee,
+        shift_end_minute - shift_start_minute,
+    )
     instance = ToyInstance(
         customers=customers,
         vehicles=vehicles,
@@ -996,14 +1165,16 @@ def build_matrix_adapter(
         break_duration_minutes=break_duration_minutes,
         max_charging_branch_evaluations=max_charging_branch_evaluations,
         weights=weights,
+        objective_scales_override=objective_scales,
     )
     validate_instance(instance)
 
     warnings = [
         "Customer quantities in Liter are converted with 1 Liter = 1 kg.",
         (
-            "Regular loaded OD risk_total is interpreted as a per-kilometre "
-            "risk rate and multiplied by leg distance during evaluation."
+            "Regular loaded risk uses the solver formula: normalized "
+            "risk_total and normalized road_penalty_total each receive "
+            "weight 0.5."
         ),
         (
             "Customer-to-depot travel uses one reachable fastest/shortest "
@@ -1011,17 +1182,22 @@ def build_matrix_adapter(
             "use the safest loaded profile."
         ),
         (
-            "Charging-station power and energy price use adapter defaults. "
-            "Charging duration remains energy-based and is limited by the "
-            "vehicle charging power."
+            "For the supplied precomputed matrix, reachable is the solver "
+            "authority for legal OD availability. tunnel_used is retained as "
+            "a diagnostic source field and is not filtered a second time."
+        ),
+        (
+            "Solver-comparison charging uses 45 minutes and a fixed cost of "
+            "300 per charging event; energy and end-of-day recharge costs "
+            "are zero."
         ),
         (
             "Vehicle payload uses fuel_capacity_l and activation cost uses "
             "fixcost to match the current solver assumptions."
         ),
         (
-            "Service, loading, shift, driving, and break times are adapter "
-            "scenario settings because the supplied CSVs do not contain them."
+            "Service time is 45 minutes, the shift and working limit are 780 "
+            "minutes, and initial/reload time is zero for solver comparison."
         ),
     ]
     if compatibility_source.startswith("assumption_"):
@@ -1036,7 +1212,7 @@ def build_matrix_adapter(
     if illegal_relations:
         warnings.append(
             f"{len(illegal_relations)} loaded safest OD relations were "
-            "excluded because they are unreachable."
+            "excluded because they are unreachable or have incomplete metrics."
         )
 
     source_files = {
@@ -1055,6 +1231,8 @@ def build_matrix_adapter(
         dataset_name=data_dir.name,
         source_files=source_files,
         scenario_parameters=dict(scalar_parameters),
+        risk_parameters=risk_parameters,
+        objective_scale_source="solver_worst_case",
         customer_names=customer_names,
         vehicle_hazard_compatibility=normalized_compatibility,
         vehicle_hazard_compatibility_source=compatibility_source,
@@ -1062,8 +1240,8 @@ def build_matrix_adapter(
         excluded_customers=excluded,
         illegal_loaded_relations=illegal_relations,
         risk_source=(
-            "risk_total as per-km rate; "
-            "leg risk = risk_total * distance_km"
+            "0.5 * risk_total / risk_total_max + 0.5 * "
+            "road_penalty_total / road_penalty_total_max"
         ),
         warnings=tuple(warnings),
     )
@@ -1092,6 +1270,7 @@ def summarize_adapter(result: MatrixAdapterResult) -> str:
         f"chargers={len(result.instance.chargers)}",
         f"legs={len(result.instance.legs)}",
         f"risk_source={result.risk_source}",
+        f"objective_scale_source={result.objective_scale_source}",
         (
             "vehicle_hazard_compatibility_source="
             f"{result.vehicle_hazard_compatibility_source}"
@@ -1099,6 +1278,8 @@ def summarize_adapter(result: MatrixAdapterResult) -> str:
     ]
     for name, value in sorted(result.scenario_parameters.items()):
         lines.append(f"scenario_parameter[{name}]={value}")
+    for name, value in sorted(result.risk_parameters.items()):
+        lines.append(f"risk_parameter[{name}]={value}")
     if result.illegal_loaded_relations:
         lines.append(
             "illegal_loaded_relations="
@@ -1490,6 +1671,29 @@ def build_result_payload(
         if feasible
         else {}
     )
+    charger_ids = set(adapter_result.instance.chargers)
+    charging_event_count = sum(
+        1
+        for vehicle_evaluation in evaluation.vehicle_evaluations.values()
+        for trip in vehicle_evaluation.trips
+        for stop in trip.stop_sequence
+        if stop in charger_ids
+    )
+    charging_side_trip_road_cost = sum(
+        leg.road_operating_cost
+        for vehicle_evaluation in evaluation.vehicle_evaluations.values()
+        for trip in vehicle_evaluation.trips
+        for leg in trip.legs
+        if leg.from_stop in charger_ids or leg.to_stop in charger_ids
+    )
+    regular_road_operating_cost = (
+        evaluation.total_road_operating_cost
+        - charging_side_trip_road_cost
+    )
+    solver_station_charging_cost = (
+        evaluation.total_station_charging_cost
+        + charging_side_trip_road_cost
+    )
     single_trip_per_vehicle = all(
         len(vehicle_trips) <= 1
         for vehicle_trips in trips.values()
@@ -1542,6 +1746,10 @@ def build_result_payload(
                 adapter_result.vehicle_hazard_compatibility_source
             ),
             "risk_source": adapter_result.risk_source,
+            "risk_parameters": dict(adapter_result.risk_parameters),
+            "objective_scale_source": (
+                adapter_result.objective_scale_source
+            ),
             "max_charging_branch_evaluations": (
                 adapter_result.instance.max_charging_branch_evaluations
             ),
@@ -1660,10 +1868,13 @@ def build_result_payload(
             "total_activation_cost": evaluation.total_activation_cost,
             "total_trip_cost": evaluation.total_trip_cost,
             "total_road_operating_cost": (
-                evaluation.total_road_operating_cost
+                regular_road_operating_cost
             ),
             "total_station_charging_cost": (
-                evaluation.total_station_charging_cost
+                solver_station_charging_cost
+            ),
+            "total_charging_side_trip_road_cost": (
+                charging_side_trip_road_cost
             ),
             "total_end_of_day_recharge_cost": (
                 evaluation.total_end_of_day_recharge_cost
@@ -1673,6 +1884,7 @@ def build_result_payload(
             "total_service_minutes": evaluation.total_service_minutes,
             "total_waiting_minutes": evaluation.total_waiting_minutes,
             "total_charging_minutes": evaluation.total_charging_minutes,
+            "total_charging_events": charging_event_count,
             "total_break_minutes": evaluation.total_break_minutes,
             "total_time_minutes": evaluation.total_time_minutes,
             "makespan_minute": evaluation.makespan_minute,

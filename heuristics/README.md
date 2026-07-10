@@ -59,6 +59,11 @@ The adapter excludes a regular OD relation when its loaded safest row is
 unreachable or has non-finite distance or time. Such relations are reported in
 `illegal_loaded_relations`; the heuristic does not silently replace them with a
 finite penalty. A solver comparison must use the same legal relation set.
+For the supplied precomputed matrices, `reachable` is the authoritative result
+of the upstream route filtering. The adapter keeps `tunnel_used` as diagnostic
+data and does not filter a relation a second time, matching the solver.
+This matters for the updated Small matrix: C10 is reachable in the matrix even
+though its selected OD relations retain a tunnel diagnostic flag.
 
 `--exclude-customer` may be repeated. Excluding a customer changes the
 instance and must be documented; solver comparison is valid only when both
@@ -135,21 +140,22 @@ parameters:
 
 | Parameter | Default | Unit / meaning |
 |---|---:|---|
-| `service_minutes` | `30` | Service duration per customer. |
+| `service_minutes` | `45` | Service duration per customer. |
 | `shift_start_minute` | `0` | Vehicle shift start. |
-| `shift_end_minute` | `600` | Vehicle shift end. |
-| `initial_load_minutes` | `20` | Initial depot loading time. |
-| `reload_minutes` | `15` | Reload time before another trip. |
+| `shift_end_minute` | `780` | Vehicle shift end. |
+| `initial_load_minutes` | `0` | Initial depot loading time; zero in the solver comparison. |
+| `reload_minutes` | `0` | Reload time before another trip; zero in the solver comparison. |
 | `max_daily_driving_minutes` | `540` | Maximum daily driving time. |
-| `max_daily_working_minutes` | `600` | Maximum daily working time. |
+| `max_daily_working_minutes` | `780` | Maximum daily working time. |
 | `continuous_driving_limit_minutes` | `270` | Driving time before a qualifying break. |
 | `break_duration_minutes` | `45` | Driver-break duration. |
-| `reserve_fraction` | `0.10` | Minimum battery reserve as a fraction of usable battery. |
-| `depot_charging_power_kw` | `300` | Depot charging power. |
-| `depot_energy_price_per_kwh` | `0.35` | Depot energy price. |
-| `charger_power_kw` | `300` | Public-station charging power. |
-| `charger_energy_price_per_kwh` | `0.75` | Public-station energy price. |
-| `charger_session_fee` | `0` | Fixed public charging-session fee. |
+| `reserve_fraction` | `0` | Minimum battery reserve in the solver comparison. |
+| `depot_charging_power_kw` | `999999` | Depot power is not binding in the single-trip comparison. |
+| `depot_energy_price_per_kwh` | `0` | No separate depot-energy cost in the solver formula. |
+| `charger_power_kw` | `999999` | Station power is not used when charging time is fixed. |
+| `charger_energy_price_per_kwh` | `0` | No energy-price term in the solver formula. |
+| `charger_session_fee` | `300` | Fixed cost per charging event. |
+| `fixed_charging_minutes` | `45` | Fixed duration per charging event. |
 
 For example, a custom 780-minute scenario can be constructed with:
 
@@ -225,6 +231,10 @@ The solver-compatible single-trip experiments use these assumptions:
 - customer service, charging, and driver-break times affect the schedule;
 - the final depot return is empty and has transport cost and time but no cargo-related HazMat risk;
 - the empty but uncleaned vehicle continues to use the same implemented ADR/tunnel rules as its loaded trip.
+
+For matrix-backed solver-comparison runs, the upstream preprocessing expresses
+those rules through the `reachable` field. The adapter must therefore not
+apply a second tunnel exclusion to the already selected OD relation.
 
 In multi-trip runs, depot reload time is active, payload capacity is restored only after the vehicle returns and reloads, and a vehicle may perform several non-overlapping trips during the planning day. Such runs must be clearly labelled as multi-trip and should only be compared with a solver that uses the same route structure.
 
@@ -478,12 +488,19 @@ normalization_population
 
 The same transformations and constants must be reused by the solver. The population-and-accident structure is consistent with the practical fuel-distribution risk direction in Cuneo et al. (2018).
 
-The current matrix-backed workflow does not recompute these edge components.
-For each reachable loaded `safest` OD row, it interprets the supplied
-`risk_total` value as a per-kilometre rate. The schedule evaluator therefore
-uses `risk_total * distance_km * HazardFactor` for a loaded leg. This convention
-is recorded in `metadata.risk_source` and must be matched explicitly by the
-solver before raw risk values or objective gaps are compared.
+The matrix-backed workflow uses the same relation-level risk premium as the
+current solver. Across the complete loaded `safest` matrix, it calculates one
+maximum for `risk_total` and one for `road_penalty_total`, then uses:
+
+```text
+leg_risk =
+    0.5 * risk_total / max(risk_total)
+    + 0.5 * road_penalty_total / max(road_penalty_total)
+```
+
+A zero maximum is replaced by `1.0`. Both maxima and both weights are exported
+in `metadata.risk_parameters`. The current solver-comparison instances use
+hazard class 3, whose class factor is `1.0`.
 
 For a loaded leg:
 
@@ -530,11 +547,10 @@ ChargingCost =
     + optional SessionFee
 ```
 
-The matrix adapter currently supplies one default station power and energy
-price because the charger matrix contains no station-specific values. Its high
-default station-power cap does not make charging instantaneous or fix it at 45
-minutes: effective power is still limited by the assigned vehicle, so charging
-duration remains energy-based.
+For solver comparison, every public charging event takes 45 minutes and costs
+300. There is no additional energy-price term. The generic heuristic data model
+still supports energy-based charging, but the matrix adapter deliberately sets
+the solver-compatible fixed duration and fixed fee.
 
 The first version assumes 100% charging efficiency and a constant `EnergyRate_v`. It does not model effects from payload, speed, gradient, weather, or temperature.
 
@@ -547,7 +563,8 @@ BatteryAfterLeg >= MinReserve_v
 
 It starts each vehicle at `InitialBattery_v` and uses full charging. `InitialBattery_v` is the state after overnight depot charging; the heuristic does not add another charging activity before the first trip. It should normally equal `UsableBattery_v` unless the input scenario deliberately specifies a lower morning state. Partial charging is not used until both methods support it.
 
-Energy already stored in the initial battery is not free. After the final trip of each used vehicle:
+The evaluator can report end-of-day recharge energy. In the matrix-backed
+solver comparison its price is zero, so it does not change the objective:
 
 ```text
 EndOfDayRecharge_v =
@@ -557,7 +574,8 @@ EndOfDayRechargeCost_v =
     EndOfDayRecharge_v * DepotEnergyPrice
 ```
 
-Station charging during the day and end-of-day depot restoration are both paid. This balances the energy consumed over the planning day without forcing an unnecessary final charging stop.
+Public charging is represented by its fixed event cost. End-of-day restoration
+is retained as a diagnostic quantity only.
 
 In the first version, end-of-day recharge takes place outside the planning horizon. Its cost is included, but its duration does not affect shift feasibility or `total_time`. Depot charging between trips remains inside the planning horizon and uses:
 
@@ -594,7 +612,10 @@ total_cost =
     + total_end_of_day_recharge_cost
 ```
 
-`total_station_charging_cost` includes charging at public stations and depot charging between trips. It excludes only the separately reported end-of-day restoration cost.
+In the exported solver-comparison metrics, `total_station_charging_cost`
+contains both the variable road cost of the charging side trip and the fixed
+300 charging cost, matching the solver output. The side-trip road share is also
+reported separately as `total_charging_side_trip_road_cost` for transparency.
 
 ### 5.3 Time
 
@@ -639,43 +660,29 @@ objective =
     + w_time * total_time / fixed_time_scale
 ```
 
-All scales are calculated once for an instance and remain fixed during construction and VNS.
-
-For every customer `c`, first generate the set `SingleTrip_c` of feasible single-customer reference trips:
-
-```text
-Depot -> c -> Depot
-```
-
-These trips use compatible physical vehicles, rule-feasible paths, required charging, loading, service time, and the same evaluator as the heuristic. First calculate:
+All scales are calculated once for an instance and remain fixed during
+construction, VND, and VNS. The matrix adapter uses the solver's worst-case
+scales:
 
 ```text
-epsilon = 1e-9
-
-reference_risk =
-    sum min_risk(t) for t in SingleTrip_c over all c
-
-reference_cost =
-    sum min_cost(t) for t in SingleTrip_c over all c
-
-reference_time =
-    sum min_duration(t) for t in SingleTrip_c over all c
+max_solution_arcs = number_of_customers + number_of_vehicles
 
 fixed_risk_scale =
-    reference_risk if reference_risk > epsilon else 1.0
+    max_regular_leg_risk * max_solution_arcs
 
 fixed_cost_scale =
-    reference_cost if reference_cost > epsilon else 1.0
+    sum_vehicle_activation_cost
+    + max_regular_distance * max_variable_cost * max_solution_arcs
+    + 300 * number_of_customers
 
 fixed_time_scale =
-    reference_time if reference_time > epsilon else 1.0
+    780 * number_of_vehicles
 ```
 
-Each minimum is calculated independently. The reference cost includes road operating, charging, trip, and one activation cost for its selected vehicle. The scales are reference magnitudes, not bounds. Their values are exported for reproducibility. They may be used for an objective-gap comparison only if the solver explicitly uses the same scale construction.
-
-If `reference_risk <= epsilon`, risk is inactive for that instance and this fact is recorded in metadata. The fallback value prevents division by zero; it does not replace a positive risk scale below 1.
-
-If `SingleTrip_c` is empty, customer `c` is individually infeasible and construction does not start until the reason is reported.
+A non-positive scale is replaced by `1.0`. The values and the source label
+`solver_worst_case` are exported. Standalone toy instances without an adapter
+override keep the feasible single-customer reference-trip scaling used by the
+generic heuristic tests.
 
 The default experiment uses:
 
@@ -1171,6 +1178,7 @@ total_distance
 total_travel_time
 total_service_time
 total_charging_time
+total_charging_events
 total_waiting_time
 total_break_time
 total_time
@@ -1181,6 +1189,7 @@ vehicles_used
 trips_used
 served_and_unserved_customers
 normalization_and_risk_metadata
+objective_scale_source
 scenario_parameters
 construction_strategy_from_the_actual_run
 runtime_breakdown
@@ -1444,14 +1453,24 @@ remains a multi-trip heuristic extension result. The CLI and Python API expose
 the route-structure choice through `--single-trip-per-vehicle` /
 `single_trip_per_vehicle=True`.
 
+The official Small and Medium single-trip outputs are stored under
+`experiments/data/heuristic_output_multicustomer/`. Both instances are run for
+the default `(0.50, 0.30, 0.20)` weights and the cost-oriented
+`(0.30, 0.50, 0.20)` weights. The current four paired solver/heuristic JSON
+files use the same customer sets, weights, solver worst-case scales, and
+single-trip route structure.
+
 The remaining steps are:
 
-1. compare heuristic and solver JSON results for identical inputs, objective
-   definitions, scales, runtime boundaries, and the single-trip route
-   structure;
-2. expose explicit path and charging-stop moves if a future data
+1. reconcile the Medium result components before interpreting a heuristic
+   value below a solver result marked `optimal`; charging, time, and
+   feasibility calculations must be checked end to end;
+2. add measured solver runtime to its JSON output, then compare construction,
+   local-search, solver, and end-to-end runtimes explicitly;
+3. expose explicit path and charging-stop moves if a future data
    representation provides several alternatives per OD relation;
-3. report risk, cost, time, feasibility, and runtime separately.
+4. report risk, cost, time, feasibility, and runtime separately in the final
+   numerical-results section.
 
 ## 15. References Used for the Heuristic
 
