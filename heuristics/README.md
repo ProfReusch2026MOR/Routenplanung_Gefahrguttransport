@@ -55,11 +55,10 @@ Run the cost-oriented Small scenario:
 python -m heuristics.precomputed_matrix_adapter --data-dir <instance-directory> --vehicles-file <vehicles.csv> --risk-weight 0.3 --cost-weight 0.5 --time-weight 0.2 --single-trip-per-vehicle --max-charging-branch-evaluations 1000 --output-json <result.json>
 ```
 
-If a customer is only reachable via tunnel-restricted paths whose safest
-loaded cost is `inf`, the adapter replaces the missing risk rate with a
-penalty value (`2.0 × max finite risk rate`) so the leg is kept. This
-matches the solver RISK_PENALTY workaround for the same ADR data gap.
-Relations that received the penalty are listed in `penalty_risk_relations`.
+The adapter excludes a regular OD relation when its loaded safest row is
+unreachable or has non-finite distance or time. Such relations are reported in
+`illegal_loaded_relations`; the heuristic does not silently replace them with a
+finite penalty. A solver comparison must use the same legal relation set.
 
 `--exclude-customer` may be repeated. Excluding a customer changes the
 instance and must be documented; solver comparison is valid only when both
@@ -479,6 +478,13 @@ normalization_population
 
 The same transformations and constants must be reused by the solver. The population-and-accident structure is consistent with the practical fuel-distribution risk direction in Cuneo et al. (2018).
 
+The current matrix-backed workflow does not recompute these edge components.
+For each reachable loaded `safest` OD row, it interprets the supplied
+`risk_total` value as a per-kilometre rate. The schedule evaluator therefore
+uses `risk_total * distance_km * HazardFactor` for a loaded leg. This convention
+is recorded in `metadata.risk_source` and must be matched explicitly by the
+solver before raw risk values or objective gaps are compared.
+
 For a loaded leg:
 
 ```text
@@ -523,6 +529,12 @@ ChargingCost =
     ChargedEnergy * StationEnergyPrice
     + optional SessionFee
 ```
+
+The matrix adapter currently supplies one default station power and energy
+price because the charger matrix contains no station-specific values. Its high
+default station-power cap does not make charging instantaneous or fix it at 45
+minutes: effective power is still limited by the assigned vehicle, so charging
+duration remains energy-based.
 
 The first version assumes 100% charging efficiency and a constant `EnergyRate_v`. It does not model effects from payload, speed, gradient, weather, or temperature.
 
@@ -659,7 +671,7 @@ fixed_time_scale =
     reference_time if reference_time > epsilon else 1.0
 ```
 
-Each minimum is calculated independently. The reference cost includes road operating, charging, trip, and one activation cost for its selected vehicle. The scales are reference magnitudes, not bounds. Their values and the selected reference trips are exported and reused by the solver comparison.
+Each minimum is calculated independently. The reference cost includes road operating, charging, trip, and one activation cost for its selected vehicle. The scales are reference magnitudes, not bounds. Their values are exported for reproducibility. They may be used for an objective-gap comparison only if the solver explicitly uses the same scale construction.
 
 If `reference_risk <= epsilon`, risk is inactive for that instance and this fact is recorded in metadata. The fallback value prevents division by zero; it does not replace a positive risk scale below 1.
 
@@ -673,9 +685,9 @@ w_cost = 0.30
 w_time = 0.20
 ```
 
-The Small instance additionally uses `(0.30, 0.50, 0.20)` to examine
-the risk-cost trade-off while keeping the time weight fixed. Medium and
-Large use only the default weights for the scalability experiments.
+The Small and Medium instances additionally use `(0.30, 0.50, 0.20)` to
+examine the risk-cost trade-off while keeping the time weight fixed. Large uses
+the default weights for the scalability experiment.
 
 ## 6. Road-Path Preprocessing
 
@@ -987,7 +999,9 @@ The first version therefore allows charging and a driver break to overlap. Custo
 
 ## 9. Variable Neighborhood Descent and Search
 
-The construction phase provides a feasible solution. The implemented toy milestone first applies deterministic best-improvement VND. VNS shaking remains the next improvement stage.
+The construction phase provides an incumbent solution. The implemented
+pipeline then applies deterministic best-improvement VND followed by
+reproducible Basic VNS shaking and nested VND.
 
 ### Relocate
 
@@ -1135,6 +1149,10 @@ diagnostics of the stages that were actually executed. `schedule_details`
 contains each vehicle's trips, visits, legs, timing, load, battery, charging,
 break, risk, and cost state. The export rejects a final evaluation, status, or
 objective scale that does not match the supplied VND/VNS run.
+Newly generated payloads use `metadata.scenario_parameters` to record the
+service, loading, shift, driving, break, charging, price, session-fee, and
+battery-reserve settings used to build the instance. Older committed snapshots
+that predate this field remain identifiable through their stage metadata.
 
 ### Run Summary
 
@@ -1163,6 +1181,7 @@ vehicles_used
 trips_used
 served_and_unserved_customers
 normalization_and_risk_metadata
+scenario_parameters
 construction_strategy_from_the_actual_run
 runtime_breakdown
 charging_branch_evaluations
@@ -1415,11 +1434,14 @@ Validate and export:
 The shared engine covers data structures, schedule evaluation, sequential
 insertion, bounded repair, charging repair, deterministic VND, reproducible
 Basic VNS, and multi-trip reuse as an extension. The reported
-solver-compatible experiments should use single-trip outputs. Small and Medium
-already have single-trip results, and Large has a single-trip feasible
-construction result with an expanded 10-vehicle fleet. The earlier 9-vehicle
-Large result remains a multi-trip heuristic extension result. The CLI and
-Python API expose this choice through `--single-trip-per-vehicle` /
+solver-comparison experiments should use single-trip outputs. The committed
+`Result` snapshots document different search stages: Small and Medium contain
+construction results, while the 47-customer Large snapshot contains
+construction plus bounded repair. A final experiment must regenerate and
+export the complete configured pipeline instead of assuming that every stored
+snapshot already contains VND and VNS. The earlier 9-vehicle Large result
+remains a multi-trip heuristic extension result. The CLI and Python API expose
+the route-structure choice through `--single-trip-per-vehicle` /
 `single_trip_per_vehicle=True`.
 
 The remaining steps are:

@@ -85,7 +85,7 @@ DEFAULT_SERVICE_MINUTES = 45.0
 DEFAULT_SHIFT_END_MINUTES = 600.0
 DEFAULT_DEPOT_ENERGY_PRICE = 0.35
 DEFAULT_CHARGER_ENERGY_PRICE = 0.75
-DEFAULT_CHARGER_POWER_KW = 999999.0  # fixed 45-min break, matches solver recharge_time
+DEFAULT_CHARGER_POWER_KW = 999999.0  # station-side cap; vehicle power still limits charging
 
 INSTANCE_COLUMNS = {
     "id",
@@ -134,15 +134,13 @@ class MatrixAdapterResult:
     instance: ToyInstance
     dataset_name: str
     source_files: Mapping[str, str]
+    scenario_parameters: Mapping[str, float]
     customer_names: Mapping[str, str]
     vehicle_hazard_compatibility: Mapping[str, Tuple[str, ...]]
     vehicle_hazard_compatibility_source: str
     included_customers: Tuple[str, ...]
     excluded_customers: Tuple[str, ...]
     illegal_loaded_relations: Tuple[Tuple[str, str], ...]
-    penalty_risk_relations: Tuple[Tuple[str, str], ...]
-    risk_penalty_prem: float
-    risk_penalty_applied: bool
     risk_source: str
     warnings: Tuple[str, ...]
 
@@ -905,6 +903,7 @@ def build_matrix_adapter(
         "charger_power_kw": charger_power_kw,
         "charger_energy_price_per_kwh": charger_energy_price_per_kwh,
         "charger_session_fee": charger_session_fee,
+        "reserve_fraction": reserve_fraction,
     }
     for label, value in scalar_parameters.items():
         _finite_nonnegative(value, label)
@@ -1003,16 +1002,18 @@ def build_matrix_adapter(
     warnings = [
         "Customer quantities in Liter are converted with 1 Liter = 1 kg.",
         (
-            "The safest loaded OD cost is provisionally treated as total "
-            "path risk and divided by path distance."
+            "Regular loaded OD risk_total is interpreted as a per-kilometre "
+            "risk rate and multiplied by leg distance during evaluation."
         ),
         (
-            "The loaded HazMat-safe OD path is conservatively reused for "
-            "empty travel because the upper-level Leg has no load-state field."
+            "Customer-to-depot travel uses one reachable fastest/shortest "
+            "empty profile with zero cargo-related risk; other regular legs "
+            "use the safest loaded profile."
         ),
         (
-            "Charging-station power and energy price use adapter defaults; "
-            "the charger CSV contains no station-specific values."
+            "Charging-station power and energy price use adapter defaults. "
+            "Charging duration remains energy-based and is limited by the "
+            "vehicle charging power."
         ),
         (
             "Vehicle payload uses fuel_capacity_l and activation cost uses "
@@ -1053,16 +1054,17 @@ def build_matrix_adapter(
         instance=instance,
         dataset_name=data_dir.name,
         source_files=source_files,
+        scenario_parameters=dict(scalar_parameters),
         customer_names=customer_names,
         vehicle_hazard_compatibility=normalized_compatibility,
         vehicle_hazard_compatibility_source=compatibility_source,
         included_customers=included,
         excluded_customers=excluded,
         illegal_loaded_relations=illegal_relations,
-        penalty_risk_relations=tuple(),
-        risk_penalty_prem=0.0,
-        risk_penalty_applied=False,
-        risk_source="risk_total (direct)",
+        risk_source=(
+            "risk_total as per-km rate; "
+            "leg risk = risk_total * distance_km"
+        ),
         warnings=tuple(warnings),
     )
 
@@ -1095,6 +1097,8 @@ def summarize_adapter(result: MatrixAdapterResult) -> str:
             f"{result.vehicle_hazard_compatibility_source}"
         ),
     ]
+    for name, value in sorted(result.scenario_parameters.items()):
+        lines.append(f"scenario_parameter[{name}]={value}")
     if result.illegal_loaded_relations:
         lines.append(
             "illegal_loaded_relations="
@@ -1615,6 +1619,7 @@ def build_result_payload(
                 name: Path(path).name
                 for name, path in adapter_result.source_files.items()
             },
+            "scenario_parameters": dict(adapter_result.scenario_parameters),
             "single_trip_per_vehicle_requested": (
                 construction_run.single_trip_per_vehicle
             ),
@@ -1651,7 +1656,6 @@ def build_result_payload(
         },
         "metrics": {
             "total_risk": evaluation.total_risk,
-            "total_risk_solver_compatible": evaluation.total_risk,
             "total_cost": evaluation.total_cost,
             "total_activation_cost": evaluation.total_activation_cost,
             "total_trip_cost": evaluation.total_trip_cost,
