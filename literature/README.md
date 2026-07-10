@@ -40,6 +40,12 @@ The classical VRP is already combinatorial because customer assignment and visit
 
 Erkut and Verter (1998) are mainly relevant for the risk definition. Their discussion shows that different risk measures may lead to different preferred routes, even on the same network. This matters for our model because the risk score should not be treated as a hidden variant of distance or travel time. It has to be defined explicitly and justified as a modelling choice.
 
+### Erkut, Tjandra, and Verter (2007)
+
+**Reference:** Erkut, E., Tjandra, S. A., and Verter, V. (2007). Hazardous Materials Transportation. In C. Barnhart and G. Laporte (Eds.), Transportation, Handbooks in Operations Research and Management Science, 14, 539-621. Elsevier.
+
+Erkut, Tjandra, and Verter provide a broad overview of hazardous-material transportation planning, including routing, network-design, risk, and policy aspects. This source is relevant for discussing how restrictions, closures, or strongly discouraged network elements can be represented in hazmat planning models. For the project, it supports the general idea that route availability and route risk must be treated explicitly, while the exact encoding as hard exclusion or finite penalty remains a modelling decision that has to be stated for each solution approach.
+
 ### Holeczek (2019)
 
 **Reference:** Holeczek, N. (2019). Hazardous materials truck transportation problems: A classification and state of the art literature review. Transportation Research Part D: Transport and Environment, 69, 305-328. https://doi.org/10.1016/j.trd.2019.02.010
@@ -96,6 +102,12 @@ Solomon is a standard reference for route construction under time-window constra
 
 Mladenovic and Hansen introduce the general Variable Neighborhood Search framework. Systematic neighborhood changes and the combination of shaking with local search form the methodological basis of Basic VNS, while Bula et al. (2017) show how this principle can be used specifically for hazardous-material routing.
 
+### Archetti and Speranza (2014)
+
+**Reference:** Archetti, C., and Speranza, M. G. (2014). A survey on matheuristics for routing problems. EURO Journal on Computational Optimization, 2(4), 223-246.
+
+Archetti and Speranza survey matheuristics for routing problems, where mathematical programming is combined with heuristic ideas. This is relevant for the project if a heuristic solution is used to support an exact solver, for example as an initial feasible solution or warm start. The source supports the methodological classification as a matheuristic idea, but it does not by itself prove that a specific solver accepted or benefited from a warm start; that has to be shown by solver logs or experiment results.
+
 ### Cattaruzza et al. (2016)
 
 **Reference:** Cattaruzza, D., Absi, N., and Feillet, D. (2016). Vehicle routing problems with multiple trips. 4OR, 14, 223-259.
@@ -125,6 +137,12 @@ This chapter provides the standard VRPTW background for arrival times, service p
 **Reference:** Desrochers, M., and Laporte, G. (1991). Improvements and extensions to the Miller-Tucker-Zemlin subtour elimination constraints. Operations Research Letters, 10(1), 27-36.
 
 Desrochers and Laporte develop stronger time-based subtour-elimination constraints for routing models. The report uses this work to place its own time-propagation constraints in context: strictly increasing arrival times along used arcs prevent disconnected cycles.
+
+### Sherali and Smith (2001)
+
+**Reference:** Sherali, H. D., and Smith, J. C. (2001). Improving discrete model representations via symmetry considerations. Management Science, 47(10), 1396-1407. https://doi.org/10.1287/mnsc.47.10.1396.10265
+
+Sherali and Smith discuss how symmetry in discrete optimization models can create equivalent solutions and slow down branch-and-bound search. Their work is relevant for the exact solver part of the project when identical or interchangeable vehicles create symmetric assignments. Ordering or symmetry-breaking constraints can reduce redundant search, but their benefit should be evaluated through model size, solver status, runtime, and bounds rather than assumed automatically.
 
 ### Erdogan and Miller-Hooks (2012)
 
@@ -260,7 +278,7 @@ Bula et al. provide the closest HMVRP reference for the MILP perspective. Cattar
 
 The exact solution approach is intended to implement the mathematical formulation, establish feasibility, find an incumbent, and, where possible, report a best bound or optimality gap. The literature provides the formulation principles, but claims about implementation success or optimality must come from the actual solver status rather than from the use of an exact model alone.
 
-Because the combined problem contains customer sequencing, vehicle assignment, repeated trips, legal connections, charging, and time resources, model size and runtime can increase quickly. This motivates testing the exact approach on increasing instance sizes and recording model build time, solution time, termination status, incumbent value, bound, and gap.
+Because the combined problem contains customer sequencing, vehicle assignment, repeated trips, legal connections, charging, and time resources, model size and runtime can increase quickly. Symmetry-breaking constraints can help when vehicles are interchangeable, and heuristic incumbents can support a matheuristic or warm-start workflow. These techniques should still be reported cautiously: their effect depends on the actual solver run, accepted start solution, termination status, incumbent value, bound, and gap.
 
 ### Heuristic direction
 
