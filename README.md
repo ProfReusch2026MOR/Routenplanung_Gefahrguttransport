@@ -51,6 +51,7 @@ Die Projektstruktur ist entlang der Kernbereiche Daten, Modellierung, Heuristik 
 - `data/processed/`: Modellnahe, aufbereitete Datensätze
 - `data/plausibility.ipynb`: Plausibilitäts- und Konsistenzchecks auf Datenebene
 - Weitere Projektdaten liegen zentral in unserer Sciebo-Cloud.
+- Download über Sciebo: https://hsbi.sciebo.de/s/2yJ4WQaEXinDpkB (Passwort: 1234)
 
 ### `models/`
 
