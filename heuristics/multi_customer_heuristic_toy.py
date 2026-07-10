@@ -72,6 +72,7 @@ class ChargingStation:
     power_kw: float
     energy_price_per_kwh: float
     session_fee: float = 0.0
+    fixed_charging_minutes: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,7 @@ class ToyInstance:
     break_duration_minutes: float
     max_charging_branch_evaluations: int
     weights: ObjectiveWeights
+    objective_scales_override: Optional[ObjectiveScales] = None
 
 
 @dataclass(frozen=True)
@@ -515,6 +517,24 @@ def validate_instance(instance: ToyInstance) -> None:
                 f"{station_key}.{name}",
                 errors,
             )
+        if station.fixed_charging_minutes is not None:
+            _validate_finite_number(
+                station.fixed_charging_minutes,
+                f"{station_key}.fixed_charging_minutes",
+                errors,
+            )
+
+    if instance.objective_scales_override is not None:
+        for name, value in (
+            ("risk", instance.objective_scales_override.risk),
+            ("cost", instance.objective_scales_override.cost),
+            ("time", instance.objective_scales_override.time),
+        ):
+            _validate_finite_number(
+                value,
+                f"objective_scales_override.{name}",
+                errors,
+            )
 
     for (from_stop, to_stop), leg in instance.legs.items():
         for name, value in (
@@ -650,6 +670,13 @@ def validate_instance(instance: ToyInstance) -> None:
             errors.append(
                 f"{station.station_id}: charging costs cannot be negative."
             )
+        if (
+            station.fixed_charging_minutes is not None
+            and station.fixed_charging_minutes <= 0
+        ):
+            errors.append(
+                f"{station.station_id}: fixed charging time must be positive."
+            )
 
     for customer_id, station_ids in (
         instance.customer_charger_candidates.items()
@@ -699,6 +726,15 @@ def validate_instance(instance: ToyInstance) -> None:
         errors.append(
             "Charging branch evaluation limit cannot be negative."
         )
+    if instance.objective_scales_override is not None and any(
+        value <= 0
+        for value in (
+            instance.objective_scales_override.risk,
+            instance.objective_scales_override.cost,
+            instance.objective_scales_override.time,
+        )
+    ):
+        errors.append("Objective scale overrides must be positive.")
 
     if errors:
         raise InputDataError(" | ".join(errors))
@@ -945,14 +981,17 @@ def _side_trip_plans(
         if battery_at_station < vehicle.min_reserve_kwh - EPSILON:
             continue
 
-        effective_power = min(
-            station.power_kw,
-            vehicle.max_charging_power_kw,
-        )
-        if effective_power <= 0:
-            continue
         charged_energy = vehicle.usable_battery_kwh - battery_at_station
-        charging_minutes = charged_energy / effective_power * 60.0
+        if station.fixed_charging_minutes is not None:
+            charging_minutes = station.fixed_charging_minutes
+        else:
+            effective_power = min(
+                station.power_kw,
+                vehicle.max_charging_power_kw,
+            )
+            if effective_power <= 0:
+                continue
+            charging_minutes = charged_energy / effective_power * 60.0
 
         station_departure_break = _departure_break_minutes(
             instance,
@@ -2545,6 +2584,8 @@ def evaluate_solution(
 def compute_reference_scales(instance: ToyInstance) -> ObjectiveScales:
     """Build fixed scales from feasible single-customer reference trips."""
     _validate_weights(instance.weights)
+    if instance.objective_scales_override is not None:
+        return instance.objective_scales_override
     reference_risk = 0.0
     reference_cost = 0.0
     reference_time = 0.0

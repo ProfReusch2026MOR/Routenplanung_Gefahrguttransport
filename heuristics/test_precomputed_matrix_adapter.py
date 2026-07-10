@@ -230,7 +230,25 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
         )
         self.assertAlmostEqual(
             result.instance.legs[(DEPOT, "C1")].base_risk_rate_per_km,
-            0.5,
+            0.05,
+        )
+        self.assertEqual(result.instance.chargers["L1"].session_fee, 300.0)
+        self.assertEqual(
+            result.instance.chargers["L1"].fixed_charging_minutes,
+            45.0,
+        )
+        self.assertEqual(result.objective_scale_source, "solver_worst_case")
+        self.assertAlmostEqual(
+            result.instance.objective_scales_override.risk,
+            1.5,
+        )
+        self.assertAlmostEqual(
+            result.instance.objective_scales_override.cost,
+            1_616.5,
+        )
+        self.assertAlmostEqual(
+            result.instance.objective_scales_override.time,
+            780.0,
         )
         self.assertTrue(run.evaluation.feasible)
         self.assertEqual(set(run.evaluation.served_customers), {"C1", "C2"})
@@ -266,6 +284,74 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
             Path(result.source_files["charger_matrix"]).name,
             "od_matrix_medium_charger.csv",
         )
+
+    def test_regular_risk_matches_solver_normalization(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            small_dir = self._write_fixture(Path(directory))
+            od_file = small_dir / "od_matrix_small.csv"
+            frame = pd.read_csv(od_file)
+            selected = (frame["from"] == DEPOT) & (frame["to"] == "C1")
+            frame.loc[selected, "risk_total"] = 0.25
+            frame.loc[selected, "road_penalty_total"] = 4.0
+            frame.loc[~selected, "road_penalty_total"] = 2.0
+            frame.to_csv(od_file, index=False)
+
+            result = build_matrix_adapter(small_dir)
+
+        leg = result.instance.legs[(DEPOT, "C1")]
+        self.assertAlmostEqual(leg.base_risk_rate_per_km, 0.075)
+        self.assertEqual(result.risk_parameters["risk_total_max"], 0.5)
+        self.assertEqual(
+            result.risk_parameters["road_penalty_total_max"],
+            4.0,
+        )
+
+    def test_empty_return_uses_solver_weighted_profile_choice(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            small_dir = self._write_fixture(Path(directory))
+            od_file = small_dir / "od_matrix_small.csv"
+            frame = pd.read_csv(od_file)
+            empty_rows = pd.DataFrame(
+                [
+                    {
+                        "from": "C1",
+                        "to": DEPOT,
+                        "profile": "fastest",
+                        "load_state": "empty",
+                        "dist_km": 10.0,
+                        "cost": 0.0,
+                        "time_min": 20.0,
+                        "risk_total": 0.0,
+                        "road_penalty_total": 0.0,
+                        "reachable": True,
+                        "tunnel_used": False,
+                    },
+                    {
+                        "from": "C1",
+                        "to": DEPOT,
+                        "profile": "shortest",
+                        "load_state": "empty",
+                        "dist_km": 12.0,
+                        "cost": 0.0,
+                        "time_min": 10.0,
+                        "risk_total": 0.0,
+                        "road_penalty_total": 0.0,
+                        "reachable": True,
+                        "tunnel_used": False,
+                    },
+                ]
+            )
+            pd.concat([frame, empty_rows], ignore_index=True).to_csv(
+                od_file,
+                index=False,
+            )
+
+            result = build_matrix_adapter(small_dir)
+
+        return_leg = result.instance.legs[("C1", DEPOT)]
+        self.assertEqual(return_leg.distance_km, 12.0)
+        self.assertEqual(return_leg.travel_minutes, 10.0)
+        self.assertEqual(return_leg.base_risk_rate_per_km, 0.0)
 
     def test_rejects_ambiguous_regular_matrix_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -345,8 +431,23 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
         self.assertIn(("C2", DEPOT), result.instance.legs)
         self.assertEqual(
             result.risk_source,
-            "risk_total as per-km rate; leg risk = risk_total * distance_km",
+            "0.5 * risk_total / risk_total_max + 0.5 * "
+            "road_penalty_total / road_penalty_total_max",
         )
+
+    def test_keeps_reachable_relation_marked_with_tunnel_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            small_dir = self._write_fixture(Path(directory))
+            od_file = small_dir / "od_matrix_small.csv"
+            frame = pd.read_csv(od_file)
+            relation = (frame["from"] == DEPOT) & (frame["to"] == "C1")
+            frame.loc[relation, "tunnel_used"] = True
+            frame.to_csv(od_file, index=False)
+
+            result = build_matrix_adapter(small_dir)
+
+        self.assertIn((DEPOT, "C1"), result.instance.legs)
+        self.assertNotIn((DEPOT, "C1"), result.illegal_loaded_relations)
 
     def test_charger_candidate_requires_both_legal_directions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -607,12 +708,14 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             small_dir = self._write_fixture(Path(directory))
             od_file = small_dir / "od_matrix_small.csv"
-            frame = pd.read_csv(od_file).drop(columns=["cost"])
+            frame = pd.read_csv(od_file).drop(
+                columns=["road_penalty_total"]
+            )
             frame.to_csv(od_file, index=False)
 
             with self.assertRaisesRegex(
                 InputDataError,
-                "missing required columns: cost",
+                "missing required columns: road_penalty_total",
             ):
                 build_matrix_adapter(small_dir)
 
@@ -729,8 +832,17 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
         )
         self.assertEqual(
             payload["metadata"]["scenario_parameters"]["reserve_fraction"],
-            0.10,
+            0.0,
         )
+        self.assertEqual(
+            payload["metadata"]["objective_scale_source"],
+            "solver_worst_case",
+        )
+        self.assertEqual(
+            payload["metadata"]["risk_parameters"]["risk_total_weight"],
+            0.5,
+        )
+        self.assertIn("total_charging_events", payload["metrics"])
         self.assertNotIn("total_risk_solver_compatible", payload["metrics"])
         self.assertEqual(
             payload["objective"]["scales"]["risk"],
@@ -893,6 +1005,8 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
             dataset_name="toy",
             source_files={},
             scenario_parameters={},
+            risk_parameters={},
+            objective_scale_source="toy",
             customer_names={
                 customer_id: customer_id
                 for customer_id in instance.customers
