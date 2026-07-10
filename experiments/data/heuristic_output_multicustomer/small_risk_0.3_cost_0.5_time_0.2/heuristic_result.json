@@ -1,9 +1,18 @@
 {
   "schema_version": "1.0",
   "status": "feasible",
-  "search_status": "feasible",
+  "search_status": "time_limit_reached",
   "routes": {
     "MAN_eTGX_1": [
+      "DEPOT",
+      "C9",
+      "C2",
+      "C7",
+      "C1",
+      "C8",
+      "DEPOT"
+    ],
+    "MAN_eTGX_2": [
       "DEPOT",
       "C4",
       "C3",
@@ -11,66 +20,59 @@
       "C6",
       "C5",
       "DEPOT"
-    ],
-    "MAN_eTGX_2": [
-      "DEPOT",
-      "C9",
-      "C2",
-      "C1",
-      "C7",
-      "DEPOT"
-    ],
-    "MAN_eTGX_3": [
-      "DEPOT",
-      "C8",
-      "DEPOT"
     ]
   },
   "trips": {
     "MAN_eTGX_1": [
       [
         "DEPOT",
-        "C4",
-        "C3",
-        "C10",
-        "C6",
-        "C5",
+        "C9",
+        "C2",
+        "C7",
+        "C1",
+        "C8",
         "DEPOT"
       ]
     ],
     "MAN_eTGX_2": [
       [
         "DEPOT",
-        "C9",
-        "C2",
-        "C1",
-        "C7",
-        "DEPOT"
-      ]
-    ],
-    "MAN_eTGX_3": [
-      [
-        "DEPOT",
-        "C8",
+        "C4",
+        "C3",
+        "C10",
+        "C6",
+        "C5",
         "DEPOT"
       ]
     ]
   },
   "charging_side_trips": {
-    "MAN_eTGX_1": [],
-    "MAN_eTGX_2": [
+    "MAN_eTGX_1": [
       {
         "trip_index": 1,
-        "origin_stop": "C7",
-        "station_id": "L129",
+        "origin_stop": "C1",
+        "station_id": "L153",
         "returns_to_origin": true,
         "solver_y_compatible": true
       }
     ],
-    "MAN_eTGX_3": []
+    "MAN_eTGX_2": []
   },
   "technical_routes": {
     "MAN_eTGX_1": [
+      [
+        "DEPOT",
+        "C9",
+        "C2",
+        "C7",
+        "C1",
+        "L153",
+        "C1",
+        "C8",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_2": [
       [
         "DEPOT",
         "C4",
@@ -78,25 +80,6 @@
         "C10",
         "C6",
         "C5",
-        "DEPOT"
-      ]
-    ],
-    "MAN_eTGX_2": [
-      [
-        "DEPOT",
-        "C9",
-        "C2",
-        "C1",
-        "C7",
-        "L129",
-        "C7",
-        "DEPOT"
-      ]
-    ],
-    "MAN_eTGX_3": [
-      [
-        "DEPOT",
-        "C8",
         "DEPOT"
       ]
     ]
@@ -183,17 +166,153 @@
       ]
     },
     "vehicle_hazard_compatibility_source": "assumption_all_vehicles_support_all_instance_classes",
-    "risk_source": "risk_total (direct)",
+    "risk_source": "0.5 * risk_total / risk_total_max + 0.5 * road_penalty_total / road_penalty_total_max",
+    "risk_parameters": {
+      "risk_total_weight": 0.5,
+      "road_penalty_weight": 0.5,
+      "risk_total_max": 0.0670672130596303,
+      "road_penalty_total_max": 38.83747456499756,
+      "empty_distance_max": 136.8922006574869,
+      "empty_time_max": 111.23778959908188
+    },
+    "objective_scale_source": "solver_worst_case",
     "max_charging_branch_evaluations": 1000,
-    "repair": null,
+    "repair": {
+      "status": "feasible",
+      "stop_reason": "completed",
+      "max_candidate_evaluations": 20000,
+      "max_seconds": 300.0,
+      "max_primary_candidates_per_ejection": 3,
+      "accepted_moves": [],
+      "evaluated_candidates": 0,
+      "incomplete_candidates": 0
+    },
     "depth_two_repair": null,
-    "vnd": null,
-    "vns": null,
+    "vnd": {
+      "status": "locally_optimal",
+      "stop_reason": "locally_optimal",
+      "max_neighborhood_passes": 1000,
+      "neighborhood_passes": 31,
+      "initial_objective": 0.20594227733386752,
+      "final_objective": 0.18024339186842872,
+      "accepted_moves": [
+        {
+          "neighborhood": "intra_trip_2opt",
+          "description": "MAN_eTGX_2 trip 1: 2-opt 2-4",
+          "objective_before": 0.20594227733386752,
+          "objective_after": 0.20404414785326663
+        },
+        {
+          "neighborhood": "intra_trip_2opt",
+          "description": "MAN_eTGX_1 trip 1: 2-opt 4-6",
+          "objective_before": 0.20404414785326663,
+          "objective_after": 0.20378689962506008
+        },
+        {
+          "neighborhood": "intra_trip_relocate",
+          "description": "MAN_eTGX_1 trip 1: relocate C9 from 6 to 1",
+          "objective_before": 0.20378689962506008,
+          "objective_after": 0.2036954802786598
+        },
+        {
+          "neighborhood": "inter_trip_relocate",
+          "description": "relocate C1 from MAN_eTGX_1 trip 1 to MAN_eTGX_2 trip 1 position 2",
+          "objective_before": 0.2036954802786598,
+          "objective_after": 0.1972340547167164
+        },
+        {
+          "neighborhood": "inter_trip_relocate",
+          "description": "relocate C7 from MAN_eTGX_2 trip 1 to MAN_eTGX_1 trip 1 position 3",
+          "objective_before": 0.1972340547167164,
+          "objective_after": 0.19552094425887354
+        },
+        {
+          "neighborhood": "intra_trip_2opt",
+          "description": "MAN_eTGX_1 trip 1: 2-opt 2-6",
+          "objective_before": 0.19552094425887354,
+          "objective_after": 0.19381901508312027
+        },
+        {
+          "neighborhood": "intra_trip_relocate",
+          "description": "MAN_eTGX_1 trip 1: relocate C7 from 5 to 6",
+          "objective_before": 0.19381901508312027,
+          "objective_after": 0.19219270259478613
+        },
+        {
+          "neighborhood": "inter_trip_relocate",
+          "description": "relocate C9 from MAN_eTGX_1 trip 1 to MAN_eTGX_2 trip 1 position 1",
+          "objective_before": 0.19219270259478613,
+          "objective_after": 0.18399074152409034
+        },
+        {
+          "neighborhood": "inter_trip_swap",
+          "description": "swap C10 in MAN_eTGX_1 trip 1 with C1 in MAN_eTGX_2 trip 1",
+          "objective_before": 0.18399074152409034,
+          "objective_after": 0.18024339186842872
+        }
+      ],
+      "evaluated_candidates": 961,
+      "incomplete_candidates": 0,
+      "incomplete_neighborhoods": [],
+      "runtime_seconds": 4.003862100000333,
+      "single_trip_per_vehicle": true
+    },
+    "vns": {
+      "status": "time_limit_reached",
+      "stop_reason": "time_limit_reached",
+      "random_seed": 42,
+      "max_iterations": 1000,
+      "max_seconds": 10.0,
+      "max_vnd_neighborhood_passes": 1000,
+      "iterations": 10,
+      "initial_objective": 0.18024339186842872,
+      "final_objective": 0.1776634140605036,
+      "accepted_improvements": [
+        {
+          "iteration": 5,
+          "neighborhood": "inter_trip_swap",
+          "shake_description": "swap C3 in MAN_eTGX_1 trip 1 with C8 in MAN_eTGX_2 trip 1",
+          "objective_before": 0.18024339186842872,
+          "shaken_objective": 0.20788242951820507,
+          "objective_after": 0.1776634140605036,
+          "vnd_moves": 7
+        }
+      ],
+      "evaluated_shakes": 10,
+      "feasible_shakes": 9,
+      "incomplete_shakes": 0,
+      "incomplete_local_searches": 1,
+      "incomplete_neighborhoods": [
+        "inter_trip_swap"
+      ],
+      "vnd_runs": 9,
+      "vnd_evaluated_candidates": 2250,
+      "runtime_seconds": 10.01486389999991,
+      "single_trip_per_vehicle": true
+    },
     "source_files": {
       "instance": "small_instanz.csv",
       "vehicles": "vehicles.csv",
       "od_matrix": "od_matrix_small.csv",
       "charger_matrix": "od_matrix_small_charger.csv"
+    },
+    "scenario_parameters": {
+      "service_minutes": 45.0,
+      "shift_start_minute": 0.0,
+      "shift_end_minute": 780.0,
+      "initial_load_minutes": 0.0,
+      "reload_minutes": 0.0,
+      "max_daily_driving_minutes": 540.0,
+      "max_daily_working_minutes": 780.0,
+      "continuous_driving_limit_minutes": 270.0,
+      "break_duration_minutes": 45.0,
+      "depot_charging_power_kw": 999999.0,
+      "depot_energy_price_per_kwh": 0.0,
+      "charger_power_kw": 999999.0,
+      "charger_energy_price_per_kwh": 0.0,
+      "charger_session_fee": 300.0,
+      "fixed_charging_minutes": 45.0,
+      "reserve_fraction": 0.0
     },
     "single_trip_per_vehicle_requested": true,
     "single_trip_per_vehicle": true,
@@ -203,49 +322,54 @@
     "requires_solver_importer_validation": true,
     "warnings": [
       "Customer quantities in Liter are converted with 1 Liter = 1 kg.",
-      "The safest loaded OD cost is provisionally treated as total path risk and divided by path distance.",
-      "The loaded HazMat-safe OD path is conservatively reused for empty travel because the upper-level Leg has no load-state field.",
-      "Charging-station power and energy price use adapter defaults; the charger CSV contains no station-specific values.",
+      "Regular loaded risk uses the solver formula: normalized risk_total and normalized road_penalty_total each receive weight 0.5.",
+      "Customer-to-depot travel uses one reachable fastest/shortest empty profile with zero cargo-related risk; other regular legs use the safest loaded profile.",
+      "For the supplied precomputed matrix, reachable is the solver authority for legal OD availability. tunnel_used is retained as a diagnostic source field and is not filtered a second time.",
+      "Solver-comparison charging uses 45 minutes and a fixed cost of 300 per charging event; energy and end-of-day recharge costs are zero.",
       "Vehicle payload uses fuel_capacity_l and activation cost uses fixcost to match the current solver assumptions.",
-      "Service, loading, shift, driving, and break times are adapter scenario settings because the supplied CSVs do not contain them.",
+      "Service time is 45 minutes, the shift and working limit are 780 minutes, and initial/reload time is zero for solver comparison.",
       "Vehicle-hazard compatibility is an explicit adapter assumption: all vehicles support all hazard classes present in this instance."
     ]
   },
   "objective": {
-    "value": 0.4577137467676895,
+    "value": 0.1776634140605036,
     "weights": {
       "risk": 0.3,
       "cost": 0.5,
       "time": 0.2
     },
     "scales": {
-      "risk": 21.451816847530726,
-      "cost": 11143.413755757898,
-      "time": 1827.6764949604399,
+      "risk": 16.0227,
+      "cost": 15753.16322,
+      "time": 7020.0,
       "risk_active": true
     }
   },
   "metrics": {
-    "total_risk": 11.359226951945793,
-    "total_risk_solver_compatible": 11.359226951945793,
-    "total_cost": 3741.5320281204094,
-    "total_activation_cost": 3000.0,
+    "total_risk": 3.2697000000000003,
+    "total_cost": 2651.6176400000004,
+    "total_activation_cost": 2000.0,
     "total_trip_cost": 0.0,
-    "total_road_operating_cost": 407.0199054677028,
-    "total_station_charging_cost": 160.98742916536514,
-    "total_end_of_day_recharge_cost": 173.52469348734138,
-    "total_distance_km": 740.0361917594596,
-    "total_travel_minutes": 791.908998235767,
-    "total_service_minutes": 300.0,
+    "total_road_operating_cost": 346.1739600000001,
+    "total_station_charging_cost": 305.44368,
+    "total_charging_side_trip_road_cost": 5.4436800000000005,
+    "total_end_of_day_recharge_cost": 0.0,
+    "total_distance_km": 639.3047999999999,
+    "total_travel_minutes": 638.0968,
+    "total_service_minutes": 450.0,
     "total_waiting_minutes": 0.0,
-    "total_charging_minutes": 42.92998111076404,
+    "total_charging_minutes": 45.0,
+    "total_charging_events": 1,
     "total_break_minutes": 45.0,
-    "total_time_minutes": 1196.908998235767,
-    "makespan_minute": 514.9487773642015
+    "total_time_minutes": 1133.0968,
+    "makespan_minute": 668.2819
   },
   "runtime_seconds": {
-    "construction": 0.4342480000004798,
-    "total_algorithm": 0.4342480000004798
+    "construction": 0.24858010000025388,
+    "repair": 0.005307800000082352,
+    "vnd": 4.003862100000333,
+    "vns": 10.01486389999991,
+    "total_algorithm": 14.272613900000579
   },
   "schedule_details": {
     "MAN_eTGX_1": {
@@ -255,23 +379,316 @@
       "reasons": [],
       "activation_cost": 1000.0,
       "trip_cost": 0.0,
-      "road_operating_cost": 129.7857614098385,
+      "road_operating_cost": 223.74682,
+      "station_charging_cost": 300.0,
+      "end_of_day_recharge_kwh": 149.75366399999996,
+      "end_of_day_recharge_cost": 0.0,
+      "total_cost": 1523.74682,
+      "total_risk": 1.6058,
+      "total_distance_km": 406.8123999999999,
+      "total_travel_minutes": 398.28190000000006,
+      "total_service_minutes": 225.0,
+      "total_waiting_minutes": 0.0,
+      "total_charging_minutes": 45.0,
+      "total_break_minutes": 45.0,
+      "operating_minutes": 668.2819,
+      "first_activity_minute": 0.0,
+      "last_return_minute": 668.2819,
+      "final_battery_kwh": 330.24633600000004,
+      "charging_branch_evaluations": 9,
+      "trips": [
+        {
+          "trip_index": 1,
+          "hazard_class": "3",
+          "customer_sequence": [
+            "C9",
+            "C2",
+            "C7",
+            "C1",
+            "C8"
+          ],
+          "stop_sequence": [
+            "DEPOT",
+            "C9",
+            "C2",
+            "C7",
+            "C1",
+            "L153",
+            "C1",
+            "C8",
+            "DEPOT"
+          ],
+          "start_minute": 0.0,
+          "return_minute": 668.2819,
+          "initial_load_kg": 29000.0,
+          "final_battery_kwh": 330.24633600000004,
+          "minimum_battery_kwh": 239.21375999999998,
+          "total_risk": 1.6058,
+          "road_operating_cost": 223.74682,
+          "station_charging_cost": 300.0,
+          "trip_cost": 0.0,
+          "travel_minutes": 398.28190000000006,
+          "service_minutes": 225.0,
+          "waiting_minutes": 0.0,
+          "charging_minutes": 45.0,
+          "break_minutes": 45.0,
+          "visits": [
+            {
+              "stop_id": "DEPOT",
+              "stop_type": "initial_loading",
+              "arrival_minute": 0.0,
+              "departure_minute": 0.0,
+              "delivered_kg": 0.0,
+              "remaining_load_kg": 29000.0,
+              "battery_arrival_kwh": 480.0,
+              "battery_departure_kwh": 480.0,
+              "charged_energy_kwh": 0.0,
+              "charging_minutes": 0.0,
+              "break_minutes": 0.0
+            },
+            {
+              "stop_id": "DEPOT",
+              "stop_type": "depot_departure",
+              "arrival_minute": 0.0,
+              "departure_minute": 0.0,
+              "delivered_kg": 0.0,
+              "remaining_load_kg": 29000.0,
+              "battery_arrival_kwh": 480.0,
+              "battery_departure_kwh": 480.0,
+              "charged_energy_kwh": 0.0,
+              "charging_minutes": 0.0,
+              "break_minutes": 0.0
+            },
+            {
+              "stop_id": "C9",
+              "stop_type": "customer",
+              "arrival_minute": 69.022,
+              "departure_minute": 114.022,
+              "delivered_kg": 2500.0,
+              "remaining_load_kg": 26500.0,
+              "battery_arrival_kwh": 418.509504,
+              "battery_departure_kwh": 418.509504,
+              "charged_energy_kwh": 0.0,
+              "charging_minutes": 0.0,
+              "break_minutes": 0.0
+            },
+            {
+              "stop_id": "C2",
+              "stop_type": "customer",
+              "arrival_minute": 183.0859,
+              "departure_minute": 228.0859,
+              "delivered_kg": 9000.0,
+              "remaining_load_kg": 17500.0,
+              "battery_arrival_kwh": 358.580064,
+              "battery_departure_kwh": 358.580064,
+              "charged_energy_kwh": 0.0,
+              "charging_minutes": 0.0,
+              "break_minutes": 0.0
+            },
+            {
+              "stop_id": "C7",
+              "stop_type": "customer",
+              "arrival_minute": 282.0244,
+              "departure_minute": 327.0244,
+              "delivered_kg": 4500.0,
+              "remaining_load_kg": 13000.0,
+              "battery_arrival_kwh": 305.653152,
+              "battery_departure_kwh": 305.653152,
+              "charged_energy_kwh": 0.0,
+              "charging_minutes": 0.0,
+              "break_minutes": 0.0
+            },
+            {
+              "stop_id": "C1",
+              "stop_type": "customer",
+              "arrival_minute": 394.68420000000003,
+              "departure_minute": 439.68420000000003,
+              "delivered_kg": 6500.0,
+              "remaining_load_kg": 6500.0,
+              "battery_arrival_kwh": 243.92323199999998,
+              "battery_departure_kwh": 243.92323199999998,
+              "charged_energy_kwh": 0.0,
+              "charging_minutes": 0.0,
+              "break_minutes": 0.0
+            },
+            {
+              "stop_id": "L153",
+              "stop_type": "charging_station",
+              "arrival_minute": 443.88910000000004,
+              "departure_minute": 488.88910000000004,
+              "delivered_kg": 0.0,
+              "remaining_load_kg": 6500.0,
+              "battery_arrival_kwh": 239.21375999999998,
+              "battery_departure_kwh": 480.0,
+              "charged_energy_kwh": 240.78624000000002,
+              "charging_minutes": 45.0,
+              "break_minutes": 45.0
+            },
+            {
+              "stop_id": "C1",
+              "stop_type": "customer_revisit",
+              "arrival_minute": 493.16790000000003,
+              "departure_minute": 493.16790000000003,
+              "delivered_kg": 0.0,
+              "remaining_load_kg": 6500.0,
+              "battery_arrival_kwh": 475.207776,
+              "battery_departure_kwh": 475.207776,
+              "charged_energy_kwh": 0.0,
+              "charging_minutes": 0.0,
+              "break_minutes": 0.0
+            },
+            {
+              "stop_id": "C8",
+              "stop_type": "customer",
+              "arrival_minute": 558.9937,
+              "departure_minute": 603.9937,
+              "delivered_kg": 6500.0,
+              "remaining_load_kg": 0.0,
+              "battery_arrival_kwh": 402.422112,
+              "battery_departure_kwh": 402.422112,
+              "charged_energy_kwh": 0.0,
+              "charging_minutes": 0.0,
+              "break_minutes": 0.0
+            },
+            {
+              "stop_id": "DEPOT",
+              "stop_type": "depot_return",
+              "arrival_minute": 668.2819,
+              "departure_minute": 668.2819,
+              "delivered_kg": 0.0,
+              "remaining_load_kg": 0.0,
+              "battery_arrival_kwh": 330.24633600000004,
+              "battery_departure_kwh": 330.24633600000004,
+              "charged_energy_kwh": 0.0,
+              "charging_minutes": 0.0,
+              "break_minutes": 0.0
+            }
+          ],
+          "legs": [
+            {
+              "from_stop": "DEPOT",
+              "to_stop": "C9",
+              "loaded": true,
+              "distance_km": 64.0526,
+              "travel_minutes": 69.022,
+              "risk": 0.343,
+              "energy_kwh": 61.49049599999999,
+              "road_operating_cost": 35.228930000000005,
+              "battery_before_kwh": 480.0,
+              "battery_after_kwh": 418.509504
+            },
+            {
+              "from_stop": "C9",
+              "to_stop": "C2",
+              "loaded": true,
+              "distance_km": 62.4265,
+              "travel_minutes": 69.0639,
+              "risk": 0.3756,
+              "energy_kwh": 59.92943999999999,
+              "road_operating_cost": 34.334575,
+              "battery_before_kwh": 418.509504,
+              "battery_after_kwh": 358.580064
+            },
+            {
+              "from_stop": "C2",
+              "to_stop": "C7",
+              "loaded": true,
+              "distance_km": 55.1322,
+              "travel_minutes": 53.9385,
+              "risk": 0.2616,
+              "energy_kwh": 52.926911999999994,
+              "road_operating_cost": 30.32271,
+              "battery_before_kwh": 358.580064,
+              "battery_after_kwh": 305.653152
+            },
+            {
+              "from_stop": "C7",
+              "to_stop": "C1",
+              "loaded": true,
+              "distance_km": 64.302,
+              "travel_minutes": 67.6598,
+              "risk": 0.3215,
+              "energy_kwh": 61.72992000000001,
+              "road_operating_cost": 35.36610000000001,
+              "battery_before_kwh": 305.653152,
+              "battery_after_kwh": 243.92323199999998
+            },
+            {
+              "from_stop": "C1",
+              "to_stop": "L153",
+              "loaded": true,
+              "distance_km": 4.9057,
+              "travel_minutes": 4.2049,
+              "risk": 0.0,
+              "energy_kwh": 4.709472,
+              "road_operating_cost": 2.6981350000000006,
+              "battery_before_kwh": 243.92323199999998,
+              "battery_after_kwh": 239.21375999999998
+            },
+            {
+              "from_stop": "L153",
+              "to_stop": "C1",
+              "loaded": true,
+              "distance_km": 4.9919,
+              "travel_minutes": 4.2788,
+              "risk": 0.0,
+              "energy_kwh": 4.792224,
+              "road_operating_cost": 2.7455450000000003,
+              "battery_before_kwh": 480.0,
+              "battery_after_kwh": 475.207776
+            },
+            {
+              "from_stop": "C1",
+              "to_stop": "C8",
+              "loaded": true,
+              "distance_km": 75.8184,
+              "travel_minutes": 65.8258,
+              "risk": 0.3041,
+              "energy_kwh": 72.785664,
+              "road_operating_cost": 41.70012,
+              "battery_before_kwh": 475.207776,
+              "battery_after_kwh": 402.422112
+            },
+            {
+              "from_stop": "C8",
+              "to_stop": "DEPOT",
+              "loaded": false,
+              "distance_km": 75.1831,
+              "travel_minutes": 64.2882,
+              "risk": 0.0,
+              "energy_kwh": 72.175776,
+              "road_operating_cost": 41.350705,
+              "battery_before_kwh": 402.422112,
+              "battery_after_kwh": 330.24633600000004
+            }
+          ]
+        }
+      ]
+    },
+    "MAN_eTGX_2": {
+      "vehicle_id": "MAN_eTGX_2",
+      "solver_name": "MAN_eTGX_2",
+      "feasible": true,
+      "reasons": [],
+      "activation_cost": 1000.0,
+      "trip_cost": 0.0,
+      "road_operating_cost": 127.87082000000001,
       "station_charging_cost": 0.0,
-      "end_of_day_recharge_kwh": 226.53514718808174,
-      "end_of_day_recharge_cost": 79.2873015158286,
-      "total_cost": 1209.073062925667,
-      "total_risk": 4.62861141988505,
-      "total_distance_km": 235.97411165425183,
-      "total_travel_minutes": 258.5613547251982,
-      "total_service_minutes": 150.0,
+      "end_of_day_recharge_kwh": 223.192704,
+      "end_of_day_recharge_cost": 0.0,
+      "total_cost": 1127.87082,
+      "total_risk": 1.6639000000000002,
+      "total_distance_km": 232.4924,
+      "total_travel_minutes": 239.81490000000002,
+      "total_service_minutes": 225.0,
       "total_waiting_minutes": 0.0,
       "total_charging_minutes": 0.0,
       "total_break_minutes": 0.0,
-      "operating_minutes": 428.5613547251982,
+      "operating_minutes": 464.8149,
       "first_activity_minute": 0.0,
-      "last_return_minute": 428.5613547251982,
-      "final_battery_kwh": 253.46485281191826,
-      "charging_branch_evaluations": 14,
+      "last_return_minute": 464.8149,
+      "final_battery_kwh": 256.807296,
+      "charging_branch_evaluations": 19,
       "trips": [
         {
           "trip_index": 1,
@@ -292,17 +709,17 @@
             "C5",
             "DEPOT"
           ],
-          "start_minute": 20.0,
-          "return_minute": 428.5613547251982,
+          "start_minute": 0.0,
+          "return_minute": 464.8149,
           "initial_load_kg": 28000.0,
-          "final_battery_kwh": 253.46485281191826,
-          "minimum_battery_kwh": 253.46485281191826,
-          "total_risk": 4.62861141988505,
-          "road_operating_cost": 129.7857614098385,
+          "final_battery_kwh": 256.807296,
+          "minimum_battery_kwh": 256.807296,
+          "total_risk": 1.6639000000000002,
+          "road_operating_cost": 127.87082000000001,
           "station_charging_cost": 0.0,
           "trip_cost": 0.0,
-          "travel_minutes": 258.5613547251982,
-          "service_minutes": 150.0,
+          "travel_minutes": 239.81490000000002,
+          "service_minutes": 225.0,
           "waiting_minutes": 0.0,
           "charging_minutes": 0.0,
           "break_minutes": 0.0,
@@ -311,7 +728,7 @@
               "stop_id": "DEPOT",
               "stop_type": "initial_loading",
               "arrival_minute": 0.0,
-              "departure_minute": 20.0,
+              "departure_minute": 0.0,
               "delivered_kg": 0.0,
               "remaining_load_kg": 28000.0,
               "battery_arrival_kwh": 480.0,
@@ -323,8 +740,8 @@
             {
               "stop_id": "DEPOT",
               "stop_type": "depot_departure",
-              "arrival_minute": 20.0,
-              "departure_minute": 20.0,
+              "arrival_minute": 0.0,
+              "departure_minute": 0.0,
               "delivered_kg": 0.0,
               "remaining_load_kg": 28000.0,
               "battery_arrival_kwh": 480.0,
@@ -336,12 +753,12 @@
             {
               "stop_id": "C4",
               "stop_type": "customer",
-              "arrival_minute": 49.96424919187426,
-              "departure_minute": 79.96424919187426,
+              "arrival_minute": 29.9642,
+              "departure_minute": 74.9642,
               "delivered_kg": 3500.0,
               "remaining_load_kg": 24500.0,
-              "battery_arrival_kwh": 457.09900088825225,
-              "battery_departure_kwh": 457.09900088825225,
+              "battery_arrival_kwh": 457.099008,
+              "battery_departure_kwh": 457.099008,
               "charged_energy_kwh": 0.0,
               "charging_minutes": 0.0,
               "break_minutes": 0.0
@@ -349,12 +766,12 @@
             {
               "stop_id": "C3",
               "stop_type": "customer",
-              "arrival_minute": 100.18455855833886,
-              "departure_minute": 130.18455855833886,
+              "arrival_minute": 95.18450000000001,
+              "departure_minute": 140.1845,
               "delivered_kg": 5500.0,
               "remaining_load_kg": 19000.0,
-              "battery_arrival_kwh": 440.8636678227997,
-              "battery_departure_kwh": 440.8636678227997,
+              "battery_arrival_kwh": 440.86368000000004,
+              "battery_departure_kwh": 440.86368000000004,
               "charged_energy_kwh": 0.0,
               "charging_minutes": 0.0,
               "break_minutes": 0.0
@@ -362,12 +779,12 @@
             {
               "stop_id": "C10",
               "stop_type": "customer",
-              "arrival_minute": 176.84056485517618,
-              "departure_minute": 206.84056485517618,
+              "arrival_minute": 186.84050000000002,
+              "departure_minute": 231.84050000000002,
               "delivered_kg": 4500.0,
               "remaining_load_kg": 14500.0,
-              "battery_arrival_kwh": 402.55124596424105,
-              "battery_departure_kwh": 402.55124596424105,
+              "battery_arrival_kwh": 402.551232,
+              "battery_departure_kwh": 402.551232,
               "charged_energy_kwh": 0.0,
               "charging_minutes": 0.0,
               "break_minutes": 0.0
@@ -375,12 +792,12 @@
             {
               "stop_id": "C6",
               "stop_type": "customer",
-              "arrival_minute": 232.55394183273825,
-              "departure_minute": 262.55394183273825,
+              "arrival_minute": 257.5539,
+              "departure_minute": 302.5539,
               "delivered_kg": 9500.0,
               "remaining_load_kg": 5000.0,
-              "battery_arrival_kwh": 377.76671571229934,
-              "battery_departure_kwh": 377.76671571229934,
+              "battery_arrival_kwh": 377.76672,
+              "battery_departure_kwh": 377.76672,
               "charged_energy_kwh": 0.0,
               "charging_minutes": 0.0,
               "break_minutes": 0.0
@@ -388,12 +805,12 @@
             {
               "stop_id": "C5",
               "stop_type": "customer",
-              "arrival_minute": 313.5215674398223,
-              "departure_minute": 343.5215674398223,
+              "arrival_minute": 353.5215,
+              "departure_minute": 398.5215,
               "delivered_kg": 5000.0,
               "remaining_load_kg": 0.0,
-              "battery_arrival_kwh": 333.1759250135994,
-              "battery_departure_kwh": 333.1759250135994,
+              "battery_arrival_kwh": 333.175968,
+              "battery_departure_kwh": 333.175968,
               "charged_energy_kwh": 0.0,
               "charging_minutes": 0.0,
               "break_minutes": 0.0
@@ -401,12 +818,12 @@
             {
               "stop_id": "DEPOT",
               "stop_type": "depot_return",
-              "arrival_minute": 428.5613547251982,
-              "departure_minute": 428.5613547251982,
+              "arrival_minute": 464.8149,
+              "departure_minute": 464.8149,
               "delivered_kg": 0.0,
               "remaining_load_kg": 0.0,
-              "battery_arrival_kwh": 253.46485281191826,
-              "battery_departure_kwh": 253.46485281191826,
+              "battery_arrival_kwh": 256.807296,
+              "battery_departure_kwh": 256.807296,
               "charged_energy_kwh": 0.0,
               "charging_minutes": 0.0,
               "break_minutes": 0.0
@@ -417,339 +834,73 @@
               "from_stop": "DEPOT",
               "to_stop": "C4",
               "loaded": true,
-              "distance_km": 23.85520740807057,
-              "travel_minutes": 29.964249191874263,
-              "risk": 0.9145969251265835,
-              "energy_kwh": 22.900999111747744,
-              "road_operating_cost": 13.120364074438815,
+              "distance_km": 23.8552,
+              "travel_minutes": 29.9642,
+              "risk": 0.4019,
+              "energy_kwh": 22.900992,
+              "road_operating_cost": 13.120360000000002,
               "battery_before_kwh": 480.0,
-              "battery_after_kwh": 457.09900088825225
+              "battery_after_kwh": 457.099008
             },
             {
               "from_stop": "C4",
               "to_stop": "C3",
               "loaded": true,
-              "distance_km": 16.9118052765131,
-              "travel_minutes": 20.220309366464612,
-              "risk": 0.373568705994093,
-              "energy_kwh": 16.235333065452576,
-              "road_operating_cost": 9.301492902082206,
-              "battery_before_kwh": 457.09900088825225,
-              "battery_after_kwh": 440.8636678227997
+              "distance_km": 16.9118,
+              "travel_minutes": 20.2203,
+              "risk": 0.2402,
+              "energy_kwh": 16.235328,
+              "road_operating_cost": 9.301490000000001,
+              "battery_before_kwh": 457.099008,
+              "battery_after_kwh": 440.86368000000004
             },
             {
               "from_stop": "C3",
               "to_stop": "C10",
               "loaded": true,
-              "distance_km": 39.90877276933193,
-              "travel_minutes": 46.656006296837326,
-              "risk": 1.30542409096039,
-              "energy_kwh": 38.31242185855865,
-              "road_operating_cost": 21.949825023132565,
-              "battery_before_kwh": 440.8636678227997,
-              "battery_after_kwh": 402.55124596424105
+              "distance_km": 39.9088,
+              "travel_minutes": 46.656,
+              "risk": 0.4076,
+              "energy_kwh": 38.312447999999996,
+              "road_operating_cost": 21.949840000000002,
+              "battery_before_kwh": 440.86368000000004,
+              "battery_after_kwh": 402.551232
             },
             {
               "from_stop": "C10",
               "to_stop": "C6",
               "loaded": true,
-              "distance_km": 25.81721901243925,
-              "travel_minutes": 25.713376977562053,
-              "risk": 0.6114925515579432,
-              "energy_kwh": 24.78453025194168,
-              "road_operating_cost": 14.199470456841588,
-              "battery_before_kwh": 402.55124596424105,
-              "battery_after_kwh": 377.76671571229934
+              "distance_km": 25.8172,
+              "travel_minutes": 25.7134,
+              "risk": 0.23569999999999997,
+              "energy_kwh": 24.784512,
+              "road_operating_cost": 14.19946,
+              "battery_before_kwh": 402.551232,
+              "battery_after_kwh": 377.76672
             },
             {
               "from_stop": "C6",
               "to_stop": "C5",
               "loaded": true,
-              "distance_km": 46.44874031114578,
-              "travel_minutes": 50.967625607084095,
-              "risk": 1.4235291462460395,
-              "energy_kwh": 44.59079069869994,
-              "road_operating_cost": 25.54680717113018,
-              "battery_before_kwh": 377.76671571229934,
-              "battery_after_kwh": 333.1759250135994
+              "distance_km": 46.4487,
+              "travel_minutes": 50.9676,
+              "risk": 0.37850000000000006,
+              "energy_kwh": 44.590752,
+              "road_operating_cost": 25.546785000000003,
+              "battery_before_kwh": 377.76672,
+              "battery_after_kwh": 333.175968
             },
             {
               "from_stop": "C5",
               "to_stop": "DEPOT",
               "loaded": false,
-              "distance_km": 83.03236687675118,
-              "travel_minutes": 85.03978728537588,
+              "distance_km": 79.5507,
+              "travel_minutes": 66.2934,
               "risk": 0.0,
-              "energy_kwh": 79.71107220168113,
-              "road_operating_cost": 45.667801782213154,
-              "battery_before_kwh": 333.1759250135994,
-              "battery_after_kwh": 253.46485281191826
-            }
-          ]
-        }
-      ]
-    },
-    "MAN_eTGX_2": {
-      "vehicle_id": "MAN_eTGX_2",
-      "solver_name": "MAN_eTGX_2",
-      "feasible": true,
-      "reasons": [],
-      "activation_cost": 1000.0,
-      "trip_cost": 0.0,
-      "road_operating_cost": 178.57207096051312,
-      "station_charging_cost": 160.98742916536514,
-      "end_of_day_recharge_kwh": 97.03952739543911,
-      "end_of_day_recharge_cost": 33.963834588403685,
-      "total_cost": 1373.523334714282,
-      "total_risk": 4.157596398834119,
-      "total_distance_km": 324.6764926554784,
-      "total_travel_minutes": 329.9487773642015,
-      "total_service_minutes": 120.0,
-      "total_waiting_minutes": 0.0,
-      "total_charging_minutes": 42.92998111076404,
-      "total_break_minutes": 45.0,
-      "operating_minutes": 514.9487773642015,
-      "first_activity_minute": 0.0,
-      "last_return_minute": 514.9487773642015,
-      "final_battery_kwh": 382.9604726045609,
-      "charging_branch_evaluations": 49,
-      "trips": [
-        {
-          "trip_index": 1,
-          "hazard_class": "3",
-          "customer_sequence": [
-            "C9",
-            "C2",
-            "C1",
-            "C7"
-          ],
-          "stop_sequence": [
-            "DEPOT",
-            "C9",
-            "C2",
-            "C1",
-            "C7",
-            "L129",
-            "C7",
-            "DEPOT"
-          ],
-          "start_minute": 20.0,
-          "return_minute": 514.9487773642015,
-          "initial_load_kg": 22500.0,
-          "final_battery_kwh": 382.9604726045609,
-          "minimum_battery_kwh": 265.3500944461798,
-          "total_risk": 4.157596398834119,
-          "road_operating_cost": 178.57207096051312,
-          "station_charging_cost": 160.98742916536514,
-          "trip_cost": 0.0,
-          "travel_minutes": 329.9487773642015,
-          "service_minutes": 120.0,
-          "waiting_minutes": 0.0,
-          "charging_minutes": 42.92998111076404,
-          "break_minutes": 45.0,
-          "visits": [
-            {
-              "stop_id": "DEPOT",
-              "stop_type": "initial_loading",
-              "arrival_minute": 0.0,
-              "departure_minute": 20.0,
-              "delivered_kg": 0.0,
-              "remaining_load_kg": 22500.0,
-              "battery_arrival_kwh": 480.0,
-              "battery_departure_kwh": 480.0,
-              "charged_energy_kwh": 0.0,
-              "charging_minutes": 0.0,
-              "break_minutes": 0.0
-            },
-            {
-              "stop_id": "DEPOT",
-              "stop_type": "depot_departure",
-              "arrival_minute": 20.0,
-              "departure_minute": 20.0,
-              "delivered_kg": 0.0,
-              "remaining_load_kg": 22500.0,
-              "battery_arrival_kwh": 480.0,
-              "battery_departure_kwh": 480.0,
-              "charged_energy_kwh": 0.0,
-              "charging_minutes": 0.0,
-              "break_minutes": 0.0
-            },
-            {
-              "stop_id": "C9",
-              "stop_type": "customer",
-              "arrival_minute": 89.02204216154814,
-              "departure_minute": 119.02204216154814,
-              "delivered_kg": 2500.0,
-              "remaining_load_kg": 20000.0,
-              "battery_arrival_kwh": 418.5095317086124,
-              "battery_departure_kwh": 418.5095317086124,
-              "charged_energy_kwh": 0.0,
-              "charging_minutes": 0.0,
-              "break_minutes": 0.0
-            },
-            {
-              "stop_id": "C2",
-              "stop_type": "customer",
-              "arrival_minute": 188.08599105968887,
-              "departure_minute": 218.08599105968887,
-              "delivered_kg": 9000.0,
-              "remaining_load_kg": 11000.0,
-              "battery_arrival_kwh": 358.5801323476195,
-              "battery_departure_kwh": 358.5801323476195,
-              "charged_energy_kwh": 0.0,
-              "charging_minutes": 0.0,
-              "break_minutes": 0.0
-            },
-            {
-              "stop_id": "C1",
-              "stop_type": "customer",
-              "arrival_minute": 249.9729757087391,
-              "departure_minute": 279.9729757087391,
-              "delivered_kg": 6500.0,
-              "remaining_load_kg": 4500.0,
-              "battery_arrival_kwh": 334.28015496217483,
-              "battery_departure_kwh": 334.28015496217483,
-              "charged_energy_kwh": 0.0,
-              "charging_minutes": 0.0,
-              "break_minutes": 0.0
-            },
-            {
-              "stop_id": "C7",
-              "stop_type": "customer",
-              "arrival_minute": 347.4785246046691,
-              "departure_minute": 377.4785246046691,
-              "delivered_kg": 4500.0,
-              "remaining_load_kg": 0.0,
-              "battery_arrival_kwh": 267.4040118296599,
-              "battery_departure_kwh": 267.4040118296599,
-              "charged_energy_kwh": 0.0,
-              "charging_minutes": 0.0,
-              "break_minutes": 0.0
-            },
-            {
-              "stop_id": "L129",
-              "stop_type": "charging_station",
-              "arrival_minute": 379.3123794113477,
-              "departure_minute": 424.3123794113477,
-              "delivered_kg": 0.0,
-              "remaining_load_kg": 0.0,
-              "battery_arrival_kwh": 265.3500944461798,
-              "battery_departure_kwh": 480.0,
-              "charged_energy_kwh": 214.6499055538202,
-              "charging_minutes": 42.92998111076404,
-              "break_minutes": 45.0
-            },
-            {
-              "stop_id": "C7",
-              "stop_type": "customer_revisit",
-              "arrival_minute": 425.5492894534974,
-              "departure_minute": 425.5492894534974,
-              "delivered_kg": 0.0,
-              "remaining_load_kg": 0.0,
-              "battery_arrival_kwh": 478.61466075279236,
-              "battery_departure_kwh": 478.61466075279236,
-              "charged_energy_kwh": 0.0,
-              "charging_minutes": 0.0,
-              "break_minutes": 0.0
-            },
-            {
-              "stop_id": "DEPOT",
-              "stop_type": "depot_return",
-              "arrival_minute": 514.9487773642015,
-              "departure_minute": 514.9487773642015,
-              "delivered_kg": 0.0,
-              "remaining_load_kg": 0.0,
-              "battery_arrival_kwh": 382.9604726045609,
-              "battery_departure_kwh": 382.9604726045609,
-              "charged_energy_kwh": 0.0,
-              "charging_minutes": 0.0,
-              "break_minutes": 0.0
-            }
-          ],
-          "legs": [
-            {
-              "from_stop": "DEPOT",
-              "to_stop": "C9",
-              "loaded": true,
-              "distance_km": 64.05257113686204,
-              "travel_minutes": 69.02204216154814,
-              "risk": 1.2409381442518883,
-              "energy_kwh": 61.49046829138756,
-              "road_operating_cost": 35.22891412527412,
-              "battery_before_kwh": 480.0,
-              "battery_after_kwh": 418.5095317086124
-            },
-            {
-              "from_stop": "C9",
-              "to_stop": "C2",
-              "loaded": true,
-              "distance_km": 62.426457667700944,
-              "travel_minutes": 69.06394889814074,
-              "risk": 1.3463559355031378,
-              "energy_kwh": 59.9293993609929,
-              "road_operating_cost": 34.33455171723552,
-              "battery_before_kwh": 418.5095317086124,
-              "battery_after_kwh": 358.5801323476195
-            },
-            {
-              "from_stop": "C2",
-              "to_stop": "C1",
-              "loaded": true,
-              "distance_km": 25.3124764431715,
-              "travel_minutes": 31.886984649050238,
-              "risk": 0.1453317446980088,
-              "energy_kwh": 24.29997738544464,
-              "road_operating_cost": 13.921862043744326,
-              "battery_before_kwh": 358.5801323476195,
-              "battery_after_kwh": 334.28015496217483
-            },
-            {
-              "from_stop": "C1",
-              "to_stop": "C7",
-              "loaded": true,
-              "distance_km": 69.66264909636975,
-              "travel_minutes": 67.50554889592996,
-              "risk": 1.4249705743810843,
-              "energy_kwh": 66.87614313251495,
-              "road_operating_cost": 38.31445700300336,
-              "battery_before_kwh": 334.28015496217483,
-              "battery_after_kwh": 267.4040118296599
-            },
-            {
-              "from_stop": "C7",
-              "to_stop": "L129",
-              "loaded": false,
-              "distance_km": 2.1394972744584084,
-              "travel_minutes": 1.8338548066786349,
-              "risk": 0.0,
-              "energy_kwh": 2.053917383480072,
-              "road_operating_cost": 1.1767235009521246,
-              "battery_before_kwh": 267.4040118296599,
-              "battery_after_kwh": 265.3500944461798
-            },
-            {
-              "from_stop": "L129",
-              "to_stop": "C7",
-              "loaded": false,
-              "distance_km": 1.4430617158412928,
-              "travel_minutes": 1.2369100421496797,
-              "risk": 0.0,
-              "energy_kwh": 1.3853392472076411,
-              "road_operating_cost": 0.7936839437127111,
-              "battery_before_kwh": 480.0,
-              "battery_after_kwh": 478.61466075279236
-            },
-            {
-              "from_stop": "C7",
-              "to_stop": "DEPOT",
-              "loaded": false,
-              "distance_km": 99.63977932107449,
-              "travel_minutes": 89.3994879107041,
-              "risk": 0.0,
-              "energy_kwh": 95.6541881482315,
-              "road_operating_cost": 54.80187862659097,
-              "battery_before_kwh": 478.61466075279236,
-              "battery_after_kwh": 382.9604726045609
+              "energy_kwh": 76.368672,
+              "road_operating_cost": 43.752885000000006,
+              "battery_before_kwh": 333.175968,
+              "battery_after_kwh": 256.807296
             }
           ]
         }
@@ -760,133 +911,26 @@
       "solver_name": "MAN_eTGX_3",
       "feasible": true,
       "reasons": [],
-      "activation_cost": 1000.0,
+      "activation_cost": 0.0,
       "trip_cost": 0.0,
-      "road_operating_cost": 98.6620730973512,
+      "road_operating_cost": 0.0,
       "station_charging_cost": 0.0,
-      "end_of_day_recharge_kwh": 172.21016395174024,
-      "end_of_day_recharge_cost": 60.27355738310908,
-      "total_cost": 1158.9356304804603,
-      "total_risk": 2.5730191332266226,
-      "total_distance_km": 179.38558744972943,
-      "total_travel_minutes": 203.39886614636725,
-      "total_service_minutes": 30.0,
+      "end_of_day_recharge_kwh": 0.0,
+      "end_of_day_recharge_cost": 0.0,
+      "total_cost": 0.0,
+      "total_risk": 0.0,
+      "total_distance_km": 0.0,
+      "total_travel_minutes": 0.0,
+      "total_service_minutes": 0.0,
       "total_waiting_minutes": 0.0,
       "total_charging_minutes": 0.0,
       "total_break_minutes": 0.0,
-      "operating_minutes": 253.39886614636725,
-      "first_activity_minute": 0.0,
-      "last_return_minute": 253.39886614636725,
-      "final_battery_kwh": 307.78983604825976,
-      "charging_branch_evaluations": 49,
-      "trips": [
-        {
-          "trip_index": 1,
-          "hazard_class": "3",
-          "customer_sequence": [
-            "C8"
-          ],
-          "stop_sequence": [
-            "DEPOT",
-            "C8",
-            "DEPOT"
-          ],
-          "start_minute": 20.0,
-          "return_minute": 253.39886614636725,
-          "initial_load_kg": 6500.0,
-          "final_battery_kwh": 307.78983604825976,
-          "minimum_battery_kwh": 307.78983604825976,
-          "total_risk": 2.5730191332266226,
-          "road_operating_cost": 98.6620730973512,
-          "station_charging_cost": 0.0,
-          "trip_cost": 0.0,
-          "travel_minutes": 203.39886614636725,
-          "service_minutes": 30.0,
-          "waiting_minutes": 0.0,
-          "charging_minutes": 0.0,
-          "break_minutes": 0.0,
-          "visits": [
-            {
-              "stop_id": "DEPOT",
-              "stop_type": "initial_loading",
-              "arrival_minute": 0.0,
-              "departure_minute": 20.0,
-              "delivered_kg": 0.0,
-              "remaining_load_kg": 6500.0,
-              "battery_arrival_kwh": 480.0,
-              "battery_departure_kwh": 480.0,
-              "charged_energy_kwh": 0.0,
-              "charging_minutes": 0.0,
-              "break_minutes": 0.0
-            },
-            {
-              "stop_id": "DEPOT",
-              "stop_type": "depot_departure",
-              "arrival_minute": 20.0,
-              "departure_minute": 20.0,
-              "delivered_kg": 0.0,
-              "remaining_load_kg": 6500.0,
-              "battery_arrival_kwh": 480.0,
-              "battery_departure_kwh": 480.0,
-              "charged_energy_kwh": 0.0,
-              "charging_minutes": 0.0,
-              "break_minutes": 0.0
-            },
-            {
-              "stop_id": "C8",
-              "stop_type": "customer",
-              "arrival_minute": 125.22293306237717,
-              "departure_minute": 155.22293306237717,
-              "delivered_kg": 6500.0,
-              "remaining_load_kg": 0.0,
-              "battery_arrival_kwh": 392.13849630752566,
-              "battery_departure_kwh": 392.13849630752566,
-              "charged_energy_kwh": 0.0,
-              "charging_minutes": 0.0,
-              "break_minutes": 0.0
-            },
-            {
-              "stop_id": "DEPOT",
-              "stop_type": "depot_return",
-              "arrival_minute": 253.39886614636725,
-              "departure_minute": 253.39886614636725,
-              "delivered_kg": 0.0,
-              "remaining_load_kg": 0.0,
-              "battery_arrival_kwh": 307.78983604825976,
-              "battery_departure_kwh": 307.78983604825976,
-              "charged_energy_kwh": 0.0,
-              "charging_minutes": 0.0,
-              "break_minutes": 0.0
-            }
-          ],
-          "legs": [
-            {
-              "from_stop": "DEPOT",
-              "to_stop": "C8",
-              "loaded": true,
-              "distance_km": 91.5223996796608,
-              "travel_minutes": 105.22293306237717,
-              "risk": 2.5730191332266226,
-              "energy_kwh": 87.86150369247436,
-              "road_operating_cost": 50.33731982381344,
-              "battery_before_kwh": 480.0,
-              "battery_after_kwh": 392.13849630752566
-            },
-            {
-              "from_stop": "C8",
-              "to_stop": "DEPOT",
-              "loaded": false,
-              "distance_km": 87.86318777006865,
-              "travel_minutes": 98.17593308399007,
-              "risk": 0.0,
-              "energy_kwh": 84.3486602592659,
-              "road_operating_cost": 48.32475327353776,
-              "battery_before_kwh": 392.13849630752566,
-              "battery_after_kwh": 307.78983604825976
-            }
-          ]
-        }
-      ]
+      "operating_minutes": 0.0,
+      "first_activity_minute": null,
+      "last_return_minute": null,
+      "final_battery_kwh": 480.0,
+      "charging_branch_evaluations": 0,
+      "trips": []
     },
     "MAN_eTGX_4": {
       "vehicle_id": "MAN_eTGX_4",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any, Iterable, Mapping, Optional
@@ -16,11 +17,29 @@ DEFAULT_HEURISTIC_DIR = (
 DEFAULT_SOLVER_DIR = SCRIPT_DIR / "data" / "solver_output_multicustomer"
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "output" / "multicustomer_comparison"
 RESULT_FILENAMES = ("result.json", "heuristic_result.json", "solver_result.json")
+CBC_PROGRESS_PATTERN = re.compile(
+    r"After\s+(?P<nodes>\d+)\s+nodes,.*?"
+    r"(?P<incumbent>[+-]?[0-9.]+)\s+best solution,\s+"
+    r"best possible\s+(?P<bound>[+-]?[0-9.]+)\s+"
+    r"\((?P<seconds>[0-9.]+)\s+seconds\)"
+)
 WEIGHT_SCENARIO_PATTERN = re.compile(
     r"^(?P<size>small|medium|large)_risk_?(?P<risk>[0-9.]+)"
     r"_cost_?(?P<cost>[0-9.]+)_time_?(?P<time>[0-9.]+)$",
     re.IGNORECASE,
 )
+
+
+def canonical_weight(value: str) -> str:
+    """Normalize both decimal folder spellings used by solver exports."""
+    normalized = value.strip()
+    if (
+        "." not in normalized
+        and normalized.startswith("0")
+        and len(normalized) > 1
+    ):
+        normalized = f"0.{normalized[1:]}"
+    return format(float(normalized), "g")
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -65,8 +84,9 @@ def canonical_scenario_name(name: str) -> str:
     if not match:
         return normalized
     return (
-        f"{match.group('size')}_risk_{match.group('risk')}"
-        f"_cost_{match.group('cost')}_time_{match.group('time')}"
+        f"{match.group('size')}_risk_{canonical_weight(match.group('risk'))}"
+        f"_cost_{canonical_weight(match.group('cost'))}"
+        f"_time_{canonical_weight(match.group('time'))}"
     )
 
 
@@ -82,6 +102,41 @@ def find_result_file(directory: Path, preferred_name: str) -> Optional[Path]:
     if len(json_files) == 1:
         return json_files[0]
     return None
+
+
+def cbc_log_details(directory: Path) -> Mapping[str, object]:
+    """Return the final recorded CBC progress line next to a solver JSON."""
+    log_files = sorted(directory.glob("cbc_log_*.txt"))
+    if not log_files:
+        return {}
+    log_file = log_files[-1]
+    text = log_file.read_text(encoding="utf-8", errors="replace")
+    progress = list(CBC_PROGRESS_PATTERN.finditer(text))
+    details: dict[str, object] = {
+        "cbc_log_file": display_path(log_file),
+        "cbc_log_has_final_termination": bool(
+            re.search(r"(?:Result -|Total time \(CPU seconds\))", text)
+        ),
+    }
+    if not progress:
+        return details
+    last = progress[-1]
+    incumbent = float(last.group("incumbent"))
+    bound = float(last.group("bound"))
+    details.update(
+        {
+            "cbc_log_last_progress_seconds": float(last.group("seconds")),
+            "cbc_log_nodes": int(last.group("nodes")),
+            "cbc_log_incumbent": incumbent,
+            "cbc_log_best_bound": bound,
+            "cbc_log_relative_gap_percent": (
+                (incumbent - bound) / abs(incumbent) * 100.0
+                if not math.isclose(incumbent, 0.0)
+                else None
+            ),
+        }
+    )
+    return details
 
 
 def as_list(value: object) -> list[Any]:
@@ -140,7 +195,11 @@ def active_vehicle_count(routes: Mapping[str, object]) -> int:
 
 
 def route_customer_count(route: object) -> int:
-    return sum(1 for stop in as_list(route) if str(stop) != "DEPOT")
+    return sum(
+        1
+        for stop in as_list(route)
+        if re.fullmatch(r"C\d+", str(stop).strip(), re.IGNORECASE)
+    )
 
 
 def extract_result(
@@ -159,6 +218,28 @@ def extract_result(
     unserved_customers = as_list(metadata.get("unserved_customers"))
     excluded_customers = as_list(metadata.get("excluded_customers"))
     route_values = list(routes.values()) if isinstance(routes, dict) else []
+    cbc_details = (
+        cbc_log_details(path.parent) if method == "solver" else {}
+    )
+    raw_search_status = payload.get("search_status", "")
+    if method != "solver":
+        solution_interpretation = raw_search_status
+    elif cbc_details.get("cbc_log_has_final_termination"):
+        solution_interpretation = "optimality_confirmed_by_cbc_log"
+    elif cbc_details.get("cbc_log_file"):
+        solution_interpretation = (
+            "feasible_incumbent_associated_cbc_log_incomplete"
+        )
+    else:
+        solution_interpretation = (
+            "reported_optimality_unverified"
+            if scenario.startswith("medium_")
+            and raw_search_status == "optimal"
+            else raw_search_status
+        )
+    runtime_total = runtimes.get("total_algorithm")
+    if runtime_total is None:
+        runtime_total = runtimes.get("total")
     return {
         "scenario": scenario,
         "method": method,
@@ -166,7 +247,8 @@ def extract_result(
         "schema_version": payload.get("schema_version", ""),
         "dataset_name": metadata.get("dataset_name", scenario),
         "status": payload.get("status", ""),
-        "search_status": payload.get("search_status", ""),
+        "search_status": raw_search_status,
+        "solution_interpretation": solution_interpretation,
         "risk_weight": maybe_number(weights.get("risk")),
         "cost_weight": maybe_number(weights.get("cost")),
         "time_weight": maybe_number(weights.get("time")),
@@ -203,19 +285,39 @@ def extract_result(
         "runtime_repair_seconds": maybe_number(runtimes.get("repair")),
         "runtime_vnd_seconds": maybe_number(runtimes.get("vnd")),
         "runtime_vns_seconds": maybe_number(runtimes.get("vns")),
-        "runtime_total_algorithm_seconds": maybe_number(
-            runtimes.get("total_algorithm")
-        ),
+        "runtime_total_algorithm_seconds": maybe_number(runtime_total),
         "active_vehicles": (
             active_vehicle_count(routes)
             if isinstance(routes, dict)
             else len(route_values)
         ),
-        "route_count": len(route_values),
+        "route_count": (
+            active_vehicle_count(routes)
+            if isinstance(routes, dict)
+            else len(route_values)
+        ),
         "single_trip_per_vehicle": metadata.get("single_trip_per_vehicle", ""),
         "route_structure_compatible": metadata.get(
             "route_structure_compatible",
             "",
+        ),
+        "cbc_log_file": cbc_details.get("cbc_log_file", ""),
+        "cbc_log_has_final_termination": cbc_details.get(
+            "cbc_log_has_final_termination",
+            "",
+        ),
+        "cbc_log_last_progress_seconds": maybe_number(
+            cbc_details.get("cbc_log_last_progress_seconds")
+        ),
+        "cbc_log_nodes": cbc_details.get("cbc_log_nodes", ""),
+        "cbc_log_incumbent": maybe_number(
+            cbc_details.get("cbc_log_incumbent")
+        ),
+        "cbc_log_best_bound": maybe_number(
+            cbc_details.get("cbc_log_best_bound")
+        ),
+        "cbc_log_relative_gap_percent": maybe_number(
+            cbc_details.get("cbc_log_relative_gap_percent")
         ),
         "routes": routes if isinstance(routes, dict) else {},
     }
@@ -230,6 +332,7 @@ def missing_result(scenario: str, method: str) -> dict[str, Any]:
         "dataset_name": scenario,
         "status": "missing",
         "search_status": "missing",
+        "solution_interpretation": "missing",
         "risk_weight": None,
         "cost_weight": None,
         "time_weight": None,
@@ -255,6 +358,13 @@ def missing_result(scenario: str, method: str) -> dict[str, Any]:
         "route_count": None,
         "single_trip_per_vehicle": "",
         "route_structure_compatible": "",
+        "cbc_log_file": "",
+        "cbc_log_has_final_termination": "",
+        "cbc_log_last_progress_seconds": None,
+        "cbc_log_nodes": "",
+        "cbc_log_incumbent": None,
+        "cbc_log_best_bound": None,
+        "cbc_log_relative_gap_percent": None,
         "routes": {},
     }
 
@@ -300,6 +410,10 @@ def build_summary_row(
             heuristic.get("time_weight") or solver.get("time_weight")
         ),
         "solver_status": solver.get("status", "missing"),
+        "solver_solution_interpretation": solver.get(
+            "solution_interpretation",
+            "",
+        ),
         "heuristic_status": heuristic.get("status", "missing"),
         "solver_served_customers": solver.get("served_customers") or "",
         "heuristic_served_customers": heuristic.get("served_customers") or "",
@@ -351,6 +465,20 @@ def build_summary_row(
         "heuristic_route_structure_compatible": heuristic.get(
             "route_structure_compatible",
         ),
+        "solver_cbc_log_file": solver.get("cbc_log_file", ""),
+        "solver_cbc_log_has_final_termination": solver.get(
+            "cbc_log_has_final_termination",
+            "",
+        ),
+        "solver_cbc_last_progress_seconds": rounded(
+            solver.get("cbc_log_last_progress_seconds")
+        ),
+        "solver_cbc_nodes": solver.get("cbc_log_nodes", ""),
+        "solver_cbc_incumbent": rounded(solver.get("cbc_log_incumbent")),
+        "solver_cbc_best_bound": rounded(solver.get("cbc_log_best_bound")),
+        "solver_cbc_relative_gap_percent": rounded(
+            solver.get("cbc_log_relative_gap_percent")
+        ),
     }
 
 
@@ -363,6 +491,7 @@ def build_method_rows(results: Iterable[Mapping[str, Any]]) -> pd.DataFrame:
         "dataset_name",
         "status",
         "search_status",
+        "solution_interpretation",
         "risk_weight",
         "cost_weight",
         "time_weight",
@@ -388,6 +517,13 @@ def build_method_rows(results: Iterable[Mapping[str, Any]]) -> pd.DataFrame:
         "route_count",
         "single_trip_per_vehicle",
         "route_structure_compatible",
+        "cbc_log_file",
+        "cbc_log_has_final_termination",
+        "cbc_log_last_progress_seconds",
+        "cbc_log_nodes",
+        "cbc_log_incumbent",
+        "cbc_log_best_bound",
+        "cbc_log_relative_gap_percent",
     ]
     for result in results:
         rows.append(
@@ -451,6 +587,7 @@ def write_report(
         "cost_weight",
         "time_weight",
         "solver_status",
+        "solver_solution_interpretation",
         "heuristic_status",
         "solver_served_customers",
         "heuristic_served_customers",
@@ -460,6 +597,10 @@ def write_report(
         "heuristic_total_cost",
         "solver_runtime_total_algorithm_seconds",
         "heuristic_runtime_total_algorithm_seconds",
+        "solver_cbc_last_progress_seconds",
+        "solver_cbc_incumbent",
+        "solver_cbc_best_bound",
+        "solver_cbc_relative_gap_percent",
     ]
     lines = [
         "# Multi-Customer Solver-Heuristic Comparison",
@@ -504,6 +645,9 @@ def write_report(
         "",
         "- Direct quality gaps are only meaningful for rows with "
         "`comparison_status = both_feasible`.",
+        "- CBC log values describe the final recorded progress line, not a "
+        "completed solver runtime, unless `solver_cbc_log_has_final_termination` "
+        "is true.",
         "- The current heuristic snapshots are single-trip compatible results.",
         "- Risk, cost, time, and runtime are kept as separate columns because "
         "the project report should discuss these trade-offs separately.",

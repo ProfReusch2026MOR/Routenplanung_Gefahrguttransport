@@ -1,0 +1,22 @@
+scenario,method,vehicle,trip_count,technical_route,distance_km,travel_minutes,max_continuous_drive_minutes,operating_minutes,charging_minutes,break_minutes,final_battery_kwh,single_trip_check,daily_driving_check,continuous_driving_check,shift_check,battery_check,route,schedule_details_available
+medium_risk_0.3_cost_0.5_time_0.2,heuristic,MAN_eTGX_1,1.0,DEPOT -> C11 -> C10 -> C18 -> DEPOT,267.1023,245.5227,245.5227,380.5227,0.0,0.0,223.58179199999998,True,True,True,True,True,,
+medium_risk_0.3_cost_0.5_time_0.2,heuristic,MAN_eTGX_2,1.0,DEPOT -> C8 -> C4 -> C13 -> C14 -> L328 -> C14 -> C15 -> DEPOT,480.86940000000004,437.1724,258.1353,707.1724,45.0,45.0,276.2267519999999,True,True,True,True,True,,
+medium_risk_0.3_cost_0.5_time_0.2,heuristic,MAN_eTGX_3,1.0,DEPOT -> C20 -> C6 -> C7 -> C5 -> L232 -> C5 -> C16 -> DEPOT,374.0168,360.0909000000001,193.54430000000005,630.0909,45.0,45.0,294.578784,True,True,True,True,True,,
+medium_risk_0.3_cost_0.5_time_0.2,heuristic,MAN_eTGX_4,1.0,DEPOT -> C3 -> C12 -> L146 -> C12 -> C19 -> C1 -> DEPOT,541.8771,521.4296999999999,267.9162,746.4296999999999,45.0,45.0,247.063392,True,True,True,True,True,,
+medium_risk_0.3_cost_0.5_time_0.2,heuristic,Volvo_FH_Electric_2,1.0,DEPOT -> C2 -> C17 -> C9 -> L38 -> C9 -> DEPOT,318.8774,289.2594,201.2058,469.25939999999997,45.0,45.0,422.651125,True,True,True,True,True,,
+medium_risk_0.3_cost_0.5_time_0.2,solver,MAN_eTGX_1,,,,,,,,,,,,,,,DEPOT -> C20 -> DEPOT,False
+medium_risk_0.3_cost_0.5_time_0.2,solver,MAN_eTGX_2,,,,,,,,,,,,,,,DEPOT -> C11 -> C19 -> DEPOT,False
+medium_risk_0.3_cost_0.5_time_0.2,solver,MAN_eTGX_3,,,,,,,,,,,,,,,DEPOT -> C4 -> C13 -> C15 -> C14 -> DEPOT,False
+medium_risk_0.3_cost_0.5_time_0.2,solver,MAN_eTGX_4,,,,,,,,,,,,,,,DEPOT -> C12 -> L239 -> C12 -> C3 -> C1 -> DEPOT,False
+medium_risk_0.3_cost_0.5_time_0.2,solver,Volvo_FH_Electric_1,,,,,,,,,,,,,,,DEPOT -> C8 -> C6 -> C7 -> C5 -> C16 -> DEPOT,False
+medium_risk_0.3_cost_0.5_time_0.2,solver,Volvo_FH_Electric_2,,,,,,,,,,,,,,,DEPOT -> C2 -> C10 -> C18 -> C17 -> C9 -> DEPOT,False
+medium_risk_0.5_cost_0.3_time_0.2,heuristic,MAN_eTGX_1,1.0,DEPOT -> C3 -> C12 -> L146 -> C12 -> C19 -> C1 -> DEPOT,541.8771,521.4296999999999,267.9162,746.4296999999999,45.0,45.0,247.063392,True,True,True,True,True,,
+medium_risk_0.5_cost_0.3_time_0.2,heuristic,MAN_eTGX_2,1.0,DEPOT -> C20 -> C6 -> C7 -> C5 -> L232 -> C5 -> C16 -> DEPOT,374.0168,360.0909000000001,193.54430000000005,630.0909,45.0,45.0,294.578784,True,True,True,True,True,,
+medium_risk_0.5_cost_0.3_time_0.2,heuristic,MAN_eTGX_3,1.0,DEPOT -> C11 -> C10 -> C18 -> DEPOT,267.1023,245.5227,245.5227,380.5227,0.0,0.0,223.58179199999998,True,True,True,True,True,,
+medium_risk_0.5_cost_0.3_time_0.2,heuristic,MAN_eTGX_4,1.0,DEPOT -> C8 -> C4 -> C13 -> C14 -> L328 -> C14 -> C15 -> DEPOT,480.86940000000004,437.1724,258.1353,707.1724,45.0,45.0,276.2267519999999,True,True,True,True,True,,
+medium_risk_0.5_cost_0.3_time_0.2,heuristic,Volvo_FH_Electric_1,1.0,DEPOT -> C2 -> C17 -> C9 -> L38 -> C9 -> DEPOT,318.8774,289.2594,201.2058,469.25939999999997,45.0,45.0,422.651125,True,True,True,True,True,,
+medium_risk_0.5_cost_0.3_time_0.2,solver,MAN_eTGX_1,,,,,,,,,,,,,,,DEPOT -> C11 -> C17 -> C9 -> DEPOT,False
+medium_risk_0.5_cost_0.3_time_0.2,solver,MAN_eTGX_2,,,,,,,,,,,,,,,DEPOT -> C15 -> C14 -> C13 -> C4 -> DEPOT,False
+medium_risk_0.5_cost_0.3_time_0.2,solver,Volvo_FH_Electric_1,,,,,,,,,,,,,,,DEPOT -> C10 -> C18 -> C19 -> C20 -> DEPOT,False
+medium_risk_0.5_cost_0.3_time_0.2,solver,Volvo_FH_Electric_2,,,,,,,,,,,,,,,DEPOT -> C8 -> C6 -> C7 -> C5 -> C16 -> DEPOT,False
+medium_risk_0.5_cost_0.3_time_0.2,solver,Volvo_FH_Electric_3,,,,,,,,,,,,,,,DEPOT -> C2 -> C1 -> C3 -> C12 -> L146 -> C12 -> DEPOT,False

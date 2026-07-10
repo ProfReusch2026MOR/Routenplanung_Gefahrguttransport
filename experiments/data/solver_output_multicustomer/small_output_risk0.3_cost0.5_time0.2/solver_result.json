@@ -5,20 +5,20 @@
   "routes": {
     "MAN_eTGX_1": [
       "DEPOT",
-      "C2",
-      "C7",
-      "C1",
-      "C8",
-      "DEPOT"
-    ],
-    "MAN_eTGX_2": [
-      "DEPOT",
       "C9",
       "C4",
       "C3",
       "C10",
       "C6",
       "C5",
+      "DEPOT"
+    ],
+    "MAN_eTGX_2": [
+      "DEPOT",
+      "C2",
+      "C7",
+      "C1",
+      "C8",
       "DEPOT"
     ],
     "MAN_eTGX_3": [],
@@ -33,22 +33,22 @@
     "MAN_eTGX_1": [
       [
         "DEPOT",
-        "C2",
-        "C7",
-        "C1",
-        "C8",
-        "DEPOT"
-      ]
-    ],
-    "MAN_eTGX_2": [
-      [
-        "DEPOT",
         "C9",
         "C4",
         "C3",
         "C10",
         "C6",
         "C5",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_2": [
+      [
+        "DEPOT",
+        "C2",
+        "C7",
+        "C1",
+        "C8",
         "DEPOT"
       ]
     ],
@@ -75,22 +75,22 @@
     "MAN_eTGX_1": [
       [
         "DEPOT",
-        "C2",
-        "C7",
-        "C1",
-        "C8",
-        "DEPOT"
-      ]
-    ],
-    "MAN_eTGX_2": [
-      [
-        "DEPOT",
         "C9",
         "C4",
         "C3",
         "C10",
         "C6",
         "C5",
+        "DEPOT"
+      ]
+    ],
+    "MAN_eTGX_2": [
+      [
+        "DEPOT",
+        "C2",
+        "C7",
+        "C1",
+        "C8",
         "DEPOT"
       ]
     ],
@@ -105,72 +105,72 @@
   "street_profiles": [
     {
       "from": "DEPOT",
-      "to": "C2",
+      "to": "C9",
       "vehicle": "MAN_eTGX_1",
-      "profile": "fastest"
+      "profile": "safest"
     },
     {
-      "from": "C1",
-      "to": "C8",
+      "from": "C3",
+      "to": "C10",
       "vehicle": "MAN_eTGX_1",
-      "profile": "fastest"
+      "profile": "safest"
     },
     {
-      "from": "C2",
-      "to": "C7",
+      "from": "C4",
+      "to": "C3",
       "vehicle": "MAN_eTGX_1",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
-      "from": "C7",
-      "to": "C1",
+      "from": "C6",
+      "to": "C5",
       "vehicle": "MAN_eTGX_1",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
-      "from": "C8",
+      "from": "C9",
+      "to": "C4",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C10",
+      "to": "C6",
+      "vehicle": "MAN_eTGX_1",
+      "profile": "safest"
+    },
+    {
+      "from": "C5",
       "to": "DEPOT",
       "vehicle": "MAN_eTGX_1",
       "profile": "fastest"
     },
     {
       "from": "DEPOT",
-      "to": "C9",
+      "to": "C2",
       "vehicle": "MAN_eTGX_2",
-      "profile": "fastest"
+      "profile": "safest"
     },
     {
-      "from": "C3",
-      "to": "C10",
+      "from": "C1",
+      "to": "C8",
       "vehicle": "MAN_eTGX_2",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
-      "from": "C4",
-      "to": "C3",
+      "from": "C2",
+      "to": "C7",
       "vehicle": "MAN_eTGX_2",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
-      "from": "C6",
-      "to": "C5",
+      "from": "C7",
+      "to": "C1",
       "vehicle": "MAN_eTGX_2",
-      "profile": "shortest"
+      "profile": "safest"
     },
     {
-      "from": "C9",
-      "to": "C4",
-      "vehicle": "MAN_eTGX_2",
-      "profile": "shortest"
-    },
-    {
-      "from": "C10",
-      "to": "C6",
-      "vehicle": "MAN_eTGX_2",
-      "profile": "shortest"
-    },
-    {
-      "from": "C5",
+      "from": "C8",
       "to": "DEPOT",
       "vehicle": "MAN_eTGX_2",
       "profile": "fastest"
@@ -193,16 +193,16 @@
     ],
     "excluded_customers": [],
     "served_customers": [
-      "C1",
-      "C3",
-      "C6",
       "C10",
-      "C2",
-      "C9",
-      "C5",
       "C4",
+      "C1",
+      "C6",
+      "C2",
       "C8",
-      "C7"
+      "C5",
+      "C7",
+      "C9",
+      "C3"
     ],
     "unserved_customers": [],
     "customer_names": {
@@ -298,12 +298,12 @@
     "total_charging_events": 0
   },
   "runtime_seconds": {
-    "data_loading": 0.2313413000665605,
-    "data_preprocessing": 0.08620749996043742,
-    "model_building": 0.6026416000677273,
-    "model_solving": 253.23126859997865,
-    "result_processing": 0.019615400000475347,
-    "total": 254.17107440007385
+    "data_loading": 0.2341725000878796,
+    "data_preprocessing": 0.09560959995724261,
+    "model_building": 0.6097826999612153,
+    "model_solving": 603.7473928000545,
+    "result_processing": 0.012964900000952184,
+    "total": 604.6999225000618
   },
   "infeasibility_reasons": []
 }
