@@ -77,9 +77,13 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
         self,
         root: Path,
         *,
-        tunnel_relation=None,
-        infinite_relation=None,
+        unreachable_relation=None,
     ) -> Path:
+        unreachable: set = set()
+        if isinstance(unreachable_relation, list):
+            unreachable.update(unreachable_relation)
+        elif unreachable_relation is not None:
+            unreachable.add(unreachable_relation)
         small_dir = root / "Small"
         small_dir.mkdir()
         pd.DataFrame(
@@ -107,7 +111,7 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
                 },
             ]
         ).to_csv(
-            small_dir / "small_instanz_for_Timo.csv",
+            small_dir / "small_instanz.csv",
             index=False,
         )
         pd.DataFrame(
@@ -139,14 +143,12 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
                         "profile": "safest",
                         "load_state": "loaded",
                         "dist_km": 10.0,
-                        "cost": (
-                            float("inf")
-                            if relation == infinite_relation
-                            else 5.0
-                        ),
+                        "cost": 5.0,
                         "time_min": 12.0,
-                        "reachable": True,
-                        "tunnel_used": relation == tunnel_relation,
+                        "risk_total": 0.5,
+                        "road_penalty_total": 0.0,
+                        "reachable": relation not in unreachable,
+                        "tunnel_used": False,
                     }
                 )
         pd.DataFrame(od_rows).to_csv(
@@ -206,6 +208,7 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
         )
         return small_dir
 
+
     def test_builds_instance_and_runs_construction(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             small_dir = self._write_fixture(Path(directory))
@@ -239,8 +242,8 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
             medium_dir = root / "Medium"
             small_dir.rename(medium_dir)
             (
-                medium_dir / "small_instanz_for_Timo.csv"
-            ).rename(medium_dir / "medium_instanz_for_Timo.csv")
+                medium_dir / "small_instanz.csv"
+            ).rename(medium_dir / "medium_instanz.csv")
             (
                 medium_dir / "od_matrix_small.csv"
             ).rename(medium_dir / "od_matrix_medium.csv")
@@ -253,7 +256,7 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
         self.assertEqual(result.dataset_name, "Medium")
         self.assertEqual(
             Path(result.source_files["instance"]).name,
-            "medium_instanz_for_Timo.csv",
+            "medium_instanz.csv",
         )
         self.assertEqual(
             Path(result.source_files["od_matrix"]).name,
@@ -328,20 +331,22 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
         self.assertEqual(result.instance.weights, weights)
         self.assertTrue(run.evaluation.feasible)
 
-    def test_excludes_tunnel_and_nonfinite_loaded_relations(self) -> None:
+    def test_excludes_unreachable_loaded_relations(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             small_dir = self._write_fixture(
                 Path(directory),
-                tunnel_relation=(DEPOT, "C2"),
-                infinite_relation=("C2", DEPOT),
+                unreachable_relation=(DEPOT, "C2"),
             )
 
             result = build_matrix_adapter(small_dir)
 
         self.assertNotIn((DEPOT, "C2"), result.instance.legs)
-        self.assertNotIn(("C2", DEPOT), result.instance.legs)
         self.assertIn((DEPOT, "C2"), result.illegal_loaded_relations)
-        self.assertIn(("C2", DEPOT), result.illegal_loaded_relations)
+        self.assertIn(("C2", DEPOT), result.instance.legs)
+        self.assertEqual(
+            result.risk_source,
+            "risk_total as per-km rate; leg risk = risk_total * distance_km",
+        )
 
     def test_charger_candidate_requires_both_legal_directions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -719,6 +724,15 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
             100,
         )
         self.assertEqual(
+            payload["metadata"]["scenario_parameters"]["service_minutes"],
+            45.0,
+        )
+        self.assertEqual(
+            payload["metadata"]["scenario_parameters"]["reserve_fraction"],
+            0.10,
+        )
+        self.assertNotIn("total_risk_solver_compatible", payload["metrics"])
+        self.assertEqual(
             payload["objective"]["scales"]["risk"],
             run.scales.risk,
         )
@@ -824,8 +838,7 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             small_dir = self._write_fixture(
                 Path(directory),
-                tunnel_relation=(DEPOT, "C2"),
-                infinite_relation=("C2", DEPOT),
+                unreachable_relation=[("C2", DEPOT), ("C2", "C1")],
             )
             adapter = build_matrix_adapter(small_dir)
             run = construct_initial_solution(adapter.instance)
@@ -879,6 +892,7 @@ class PrecomputedMatrixAdapterTests(unittest.TestCase):
             instance=instance,
             dataset_name="toy",
             source_files={},
+            scenario_parameters={},
             customer_names={
                 customer_id: customer_id
                 for customer_id in instance.customers
