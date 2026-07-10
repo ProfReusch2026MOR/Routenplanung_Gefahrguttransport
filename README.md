@@ -49,8 +49,7 @@ Die Projektstruktur ist entlang der Kernbereiche Daten, Modellierung, Heuristik 
 
 - `data/raw/`: Rohdaten und Vorverarbeitung (u. a. Notebooks zur Datenerzeugung/-bereinigung)
 - `data/processed/`: Modellnahe, aufbereitete Datensätze
-- `data/germany_data/edges_germnay_geo_optimized.csv`: Kanten-/Netzwerkdaten für Routing
-- `data/raw/vehicles.py`: Datenbasis/Logik für Fahrzeugparameter
+- Weitere Projektdaten liegen zentral in unserer Sciebo-Cloud.
 
 ### `models/`
 
