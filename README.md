@@ -131,18 +131,6 @@ Ein Teil der HTML-Visualisierungen wurde erzeugt, als ein Darstellungsfehler bei
 
 ---
 
-## Aktuelle Literatur
-
-- Erkut, E. & Verter, V. (1998): Risk modeling for hazardous-material transport
-- Holeczek, N. (2019): Classification and literature review of hazardous-material truck transportation
-- Zografos, K. G. & Androutsopoulos, K. N. (2004): Heuristic algorithm for hazardous-material distribution problems
-- Androutsopoulos, K. N. & Zografos, K. G. (2012): Bi-objective time-dependent routing and scheduling for hazardous-material distribution
-- Bula, G. A. et al. (2016): MILP model for hazardous-material vehicle routing
-- Bula, G. A. et al. (2017): Variable Neighborhood Search for hazardous-material vehicle routing
-- Cuneo, D. et al. (2018): Risk-based multi-objective vehicle routing in fuel logistics
-
----
-
 ## Hinweise zur technischen Umgebung
 
 - Empfohlen: Python-Umgebung mit den in `requirements.current-venv.txt` hinterlegten Paketen
