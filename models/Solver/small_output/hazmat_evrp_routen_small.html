@@ -323,7 +323,7 @@ function renderSol(){
   document.getElementById('foot').innerHTML=
     `Datei &nbsp;${s.file}<br>`+
     `Laufzeit gesamt ${fmt(s.runtime.total,1)} s · Modellbau ${fmt(s.runtime.model_building,2)} s<br>`+
-    `Quellen: small_instanz.csv · od_matrix_small_test.csv · node_coords_small_coord.pkl · Accidents.csv (Unfallatlas 2024, BBox-Ausschnitt)`;
+    `Quellen: small_instanz.csv · od_matrix_small.csv · node_coords_small_coord.pkl · Accidents.csv (Unfallatlas 2024, BBox-Ausschnitt)`;
   document.getElementById('tourhint').textContent = 'identisch in beiden Szenarien';
 }
 
